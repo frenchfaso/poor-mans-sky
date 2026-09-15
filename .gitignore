@@ -1,0 +1,30 @@
+# Runtime/build output, including all cache under bin.
+/bin/
+/build/
+cache/
+cache-*/
+screenshots/
+diagnostics/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.log
+*.trace
+*.ppm
+*.dat
+*.idx
+*.pack
+*.tar
+*.tar.gz
+*.zip
+core
+core.*
+.DS_Store
+._*
+.env
+.env.*
+# Reproducible source materials; generated before fingerprinting/build.
+/assets/ground-procedural.bmp
+/assets/rock-procedural.bmp

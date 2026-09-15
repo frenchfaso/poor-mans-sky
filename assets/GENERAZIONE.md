@@ -1,0 +1,7 @@
+# Texture astronauta e nave
+
+Generata con il tool integrato imagegen; atlante originale per Poor Man's Sky. Integrata nel progetto come BMP 2048×2048 e caricata in BC1 con mipmap. Nessun modello o texture del gioco originale utilizzato.
+
+## Prompt
+
+Use case: photorealistic-natural. Asset type: production game texture atlas, square 2048x2048. Create four equally sized square material swatches in a precise 2 by 2 grid, each filling its quadrant edge to edge, NO gutters or labels. Top left: off-white ceramic spacecraft hull plating, intricate recessed rectangular panel seams, tiny fasteners, restrained edge chips exposing metal, faint grime, convincing fine grain. Top right: neutral light gray astronaut suit woven ballistic fabric, stitched rectangular reinforcement sections, seam stitching, subtle creases and realistic dense fibers. Bottom left: dark neutral gray aerospace engine metal, machined panels, vent slots, screws, ribbing, worn edges, intricate mechanical detail. Bottom right: neutral gray padded technical suit fabric, quilted sections, straps and seam stitching. Grayscale neutral materials so the game can tint them. Orthographic flat scan, albedo material texture, diffuse even illumination, photorealistic physically plausible surface detail. No perspective, no objects standing on surfaces, no large cast shadows, no text, no letters, no branding, no watermark. Each quadrant is its own repeatable material tile. This is an actual texture map for UV mapping, not a presentation board or concept art.
