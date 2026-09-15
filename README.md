@@ -1,5 +1,18 @@
 # Poor Man's Sky
 
+## Why this experiment?
+
+Could we squeeze a little No Man's Sky-style wonder out of a laptop well over a
+decade old, with a GPU measuring VRAM in **megabytes, not gigabytes**? That's the
+experiment: take a Pentium M, a Radeon RV350 with **64 MiB VRAM**, and **2 GiB RAM**,
+then see how far procedural generation, streaming and old-school graphics tricks
+can take us.
+
+With RAM feeling like a luxury again, digging out an old Acer seemed like a
+perfectly reasonable response. The ambition is a tiny explorable universe;
+the research question is how much wonder fits into very little memory.
+**Space is vast. Our VRAM isn't.**
+
 An experimental planetary exploration demo written in C99 and GLSL 1.20,
 trying to get the most out of a Pentium M, a Radeon RV350 with 64 MiB VRAM,
 and 2 GiB RAM. Built and tested primarily on Debian i686/X11.
