@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MPL-2.0
 from pathlib import Path
 import subprocess
-p=Path('poor-mans-sky.c'); original=p.read_text()
-f=Path('terrain-field.h'); field=f.read_text()
+p=Path('src/poor-mans-sky.c'); original=p.read_text()
+f=Path('src/terrain-field.h'); field=f.read_text()
 def build_ids():
-    subprocess.run(['make','cache-build.h'],check=True,stdout=subprocess.DEVNULL)
-    return Path('cache-build.h').read_text()
+    subprocess.run(['make','src/cache-build.h'],check=True,stdout=subprocess.DEVNULL)
+    return Path('src/cache-build.h').read_text()
 base=build_ids()
 try:
     changed=original.replace('* 1.8f * dt','* 1.81f * dt',1)

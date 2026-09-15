@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #define main poor_mans_sky_application_main
-#include "../poor-mans-sky.c"
+#include "../src/poor-mans-sky.c"
 #undef main
 #define CHECK(x) do{if(!(x)){fprintf(stderr,"FAIL %d %s\n",__LINE__,#x);return 1;}}while(0)
 static void testQuad(void){glBegin(GL_QUADS);glNormal3f(0,1,0);glTexCoord2f(.05,.05);glVertex3f(-1,-1,0);glVertex3f(1,-1,0);glVertex3f(1,1,0);glVertex3f(-1,1,0);glEnd();}

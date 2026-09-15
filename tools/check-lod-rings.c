@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Historical filename: now validates adaptive geometry + streaming rings. */
 #define main poor_mans_sky_application_main
-#include "../poor-mans-sky.c"
+#include "../src/poor-mans-sky.c"
 #undef main
 #include <assert.h>
 static void page(int id,float distance) {

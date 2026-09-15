@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 #define main poor_mans_sky_application_main
-#include "../poor-mans-sky.c"
+#include "../src/poor-mans-sky.c"
 #undef main
 int main(int argc,char **argv) {
   int next=argc>1?atoi(argv[1]):1;

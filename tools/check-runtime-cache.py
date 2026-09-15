@@ -3,11 +3,11 @@
 from pathlib import Path
 import subprocess
 root=Path(__file__).resolve().parent.parent
-nature=root/'nature.h';visibility=root/'visibility.h'
+nature=root/'src/nature.h';visibility=root/'src/visibility.h'
 original=nature.read_text();original_visibility=visibility.read_text()
 def ids():
  subprocess.run(['python3',str(root/'tools/cache-fingerprint.py')],check=True)
- return (root/'cache-build.h').read_text()
+ return (root/'src/cache-build.h').read_text()
 base=ids()
 try:
  nature.write_text(original.replace('static void natureDrawPass(int reflected) {','static void natureDrawPass(int reflected) { /* runtime-only test */',1))

@@ -87,8 +87,9 @@ rendering and input edits should not. The first startup builds missing data.
 
 ## Layout and checks
 
-- `poor-mans-sky.c`, `*.h`: runtime and procedural generators.
-- `poor-mans-sky-baker.c`: offline cache generation.
+- `src/poor-mans-sky.c`, `src/*.h`: runtime and procedural generators.
+- `src/poor-mans-sky-baker.c`: offline cache generation.
+- `src/cache-compat.json`: verified compatibility aliases for generated data.
 - `shaders/`: RV350-compatible rendering shaders.
 - `assets/`: source materials and provenance.
 - `tools/`: procedural material generator and focused regression checks.

@@ -3,10 +3,11 @@
 """Platform independent generator identities; payload ABI is cache-schema.h."""
 import hashlib,re,pathlib,json
 root=pathlib.Path(__file__).resolve().parent.parent
+src=root/"src"
 def clean(data):
     return re.sub(rb'^// SPDX-License-Identifier: MPL-2.0\n', b'', data, flags=re.M)
-main=clean((root/'poor-mans-sky.c').read_bytes()).decode()
-shared=clean((root/'engine-common.h').read_bytes()).decode().split('static void die')[0]
+main=clean((src/'poor-mans-sky.c').read_bytes()).decode()
+shared=clean((src/'engine-common.h').read_bytes()).decode().split('static void die')[0]
 def function(name):
     m=re.search(r'^static .*?\b'+name+r'\([^;{}]*\)\s*\{',main,re.M)
     if not m: raise ValueError(name)
@@ -15,7 +16,7 @@ def function(name):
         depth+=(main[i]=='{')-(main[i]=='}');i+=1
     return main[m.start():i]
 def payload_source(name):
-    source=clean((root/name).read_bytes()).replace(b"streamAlloc(",b"malloc(")
+    source=clean(((root if "/" in name else src)/name).read_bytes()).replace(b"streamAlloc(",b"malloc(")
     if name=='moon-field.h':
         # Only the immutable local height generator affects lunar payloads.
         text=source.decode();start=text.index('static float moonHeight(')
@@ -33,7 +34,7 @@ def payload_source(name):
             depth+=(text[end]=='{')-(text[end]=='}');end+=1
         source=text[start:end].encode()
     return source
-compat_path=root/'cache-compat.json'
+compat_path=src/'cache-compat.json'
 compat=json.loads(compat_path.read_text()) if compat_path.exists() else {}
 base=['cache-schema.h']
 domains={
@@ -61,5 +62,5 @@ for domain,files in domains.items():
     identity=compat.get(domain,{}).get(digest,digest)
     lines.append(f'#define CACHE_{domain}_ID "{identity}"')
 lines.append('#define CACHE_BUILD_ID CACHE_TERRAIN_ID')
-p=root/'cache-build.h';text='\n'.join(lines)+'\n'
+p=src/'cache-build.h';text='\n'.join(lines)+'\n'
 if not p.exists() or p.read_text()!=text:p.write_text(text)
