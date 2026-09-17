@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
 """Tileable 512x512 ground/rock materials; pure Python, no downloads or packages."""
-import math, struct
+import argparse, math, struct
 from pathlib import Path
 SIZE=512
 SEED=20260911
@@ -30,9 +30,30 @@ def save_bmp(path,pixels):
     content=header+data
     if not path.exists() or path.read_bytes()!=content:path.write_bytes(content)
 def byte(v):return max(0,min(255,round(v)))
-def generate():
-    ROOT.mkdir(exist_ok=True)
+def cellular(cells, seed):
+    """Periodic Worley F2-F1: low values trace boundaries between mineral cells."""
+    sites = [[(random_value(x,y,seed), random_value(x,y,seed+1))
+              for x in range(cells)] for y in range(cells)]
+    result = []
+    for y in range(SIZE):
+        py = y*cells/SIZE; iy = int(py)
+        for x in range(SIZE):
+            px = x*cells/SIZE; ix = int(px); first = second = 100.0
+            # Jitter is constrained to the middle half of each cell, so a
+            # 5x5 neighborhood safely contains the two nearest feature points.
+            for dy in range(-2,3):
+                for dx in range(-2,3):
+                    ox,oy = sites[(iy+dy)%cells][(ix+dx)%cells]
+                    d = (ix+dx+.25+.5*ox-px)**2 + (iy+dy+.25+.5*oy-py)**2
+                    if d < first: first,second = d,first
+                    elif d < second: second = d
+            result.append(math.sqrt(second)-math.sqrt(first))
+    return result
+
+def generate(output_dir=ROOT, variant='classic'):
+    output_dir.mkdir(parents=True,exist_ok=True)
     layers=[field(n,SEED+i*97) for i,n in enumerate((4,8,16,32,64,128,256))]
+    cells=cellular(12,SEED+701) if variant=='cellular' else None
     ground=[];rock=[]
     for y in range(SIZE):
         for x in range(SIZE):
@@ -48,10 +69,20 @@ def generate():
             # Warped, periodic stratification, mineral mottling and dark fissures.
             strata=math.sin(2*math.pi*(y*12/SIZE+1.7*b+.45*d))
             fissure=max(0,1-abs(c-.5)*55)*max(0,d-.35)*60
+            if cells is not None:
+                # Thin interrupted mineral boundaries instead of contour lines.
+                fissure=max(0,1-cells[i]/.055)*max(0,d-.30)*45
             light=(.4*a+.25*c+.2*e+.1*f+.05*g-.5)*110+strata*7+(grain-.5)*12-fissure
             warm=(b-.5)*14
             rock.append(tuple(byte(v) for v in (131+light+warm,128+light,120+light-warm)))
-    save_bmp(ROOT/'ground-procedural.bmp',ground)
-    save_bmp(ROOT/'rock-procedural.bmp',rock)
-    print('Procedural materials ready: 2 x 512x512, seed',SEED)
-if __name__=='__main__':generate()
+    save_bmp(output_dir/'ground-procedural.bmp',ground)
+    save_bmp(output_dir/'rock-procedural.bmp',rock)
+    print('Procedural materials ready: 2 x 512x512, seed',SEED,'variant',variant)
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--variant',choices=('classic','cellular'),default='classic')
+    parser.add_argument('--output-dir',type=Path,default=ROOT)
+    args=parser.parse_args()
+    if args.variant!='classic' and args.output_dir.resolve()==ROOT.resolve():
+        parser.error('experimental materials require a separate --output-dir')
+    generate(args.output_dir,args.variant)

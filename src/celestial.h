@@ -4,6 +4,9 @@
 typedef struct {V3 center,x,y,z,sun;} CelestialFrame;
 static CelestialFrame celestial={{480000,280000,560000},{1,0,0},{0,1,0},{0,0,1},{.6f,.5f,.6f}};
 static float lunarPhaseOffset=.18f;
+/* Fixed orientation of the orbit, chosen once from the unchanged spawn view. */
+static V3 lunarOrbitAxis={0,0,1};
+static float lunarOrbitCos=1, lunarOrbitSin;
 static V3 celestialVector(const CelestialFrame *f,V3 p){return add(mul(f->x,p.x),add(mul(f->y,p.y),mul(f->z,p.z)));}
 static V3 celestialInverse(const CelestialFrame *f,V3 p){return v3(dot(p,f->x),dot(p,f->y),dot(p,f->z));}
 static V3 moonVector(V3 p){return celestialVector(&celestial,p);}
@@ -16,6 +19,8 @@ static V3 celestialOrbitVector(V3 p,double orbit,double spin) {
  V3 q=celestialRotateZ(v3(dot(p,radial),dot(p,tangent),dot(p,north)),orbit);
  float c=cosf(5*PI/180),s=sinf(5*PI/180);
  q=v3(q.x,c*q.y-s*q.z,s*q.y+c*q.z);
+ q=add(mul(q,lunarOrbitCos),add(mul(cross(lunarOrbitAxis,q),lunarOrbitSin),
+       mul(lunarOrbitAxis,dot(lunarOrbitAxis,q)*(1-lunarOrbitCos))));
  return celestialRotateZ(q,spin);
 }
 static CelestialFrame celestialAt(double seconds,float dayPhase,float monthPhase) {
@@ -27,6 +32,27 @@ static CelestialFrame celestialAt(double seconds,float dayPhase,float monthPhase
   * eight-day lunar orbit. Planet coordinates account for daily rotation. */
  f.sun=celestialRotateZ(v3(1,0,0),spin+2.0*3.141592653589793*days/96.0);
  return f;
+}
+/* Place the default-time Moon above/right of the initial horizon. Rotate
+ * its entire body frame as well as its center, preserving synchronous rotation,
+ * distance and cached local terrain. Explicit time/phase offsets still apply. */
+static void celestialFrameSpawnMoon(V3 observer,V3 forward) {
+ V3 up=norm(observer),right=norm(cross(forward,up));
+ V3 ray=norm(add(forward,add(mul(right,.60f),mul(up,.14f))));
+ const V3 original={480000,280000,560000};
+ float along=dot(observer,ray);
+ float travel=-along+sqrtf(along*along+dot(original,original)-dot(observer,observer));
+ V3 target=norm(celestialRotateZ(add(observer,mul(ray,travel)),-2.0*PI*.12));
+ lunarOrbitCos=1;lunarOrbitSin=0;
+ V3 source=norm(celestialOrbitVector(original,2.0*PI*.18,0));
+ lunarOrbitCos=clampf(dot(source,target),-1,1);
+ V3 axis=cross(source,target);float length=sqrtf(dot(axis,axis));
+ if(length>1e-6f) {
+  lunarOrbitAxis=mul(axis,1/length);lunarOrbitSin=length;
+ } else {
+  lunarOrbitAxis=norm(cross(source,fabsf(source.y)<.9f?v3(0,1,0):v3(1,0,0)));
+  lunarOrbitSin=0;
+ }
 }
 static float lunarIlluminatedFraction(V3 observer){return clampf(.5f+.5f*dot(norm(add(observer,mul(celestial.center,-1))),celestial.sun),0,1);}
 static float lunarPlanetshine(void) {

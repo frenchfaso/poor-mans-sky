@@ -63,6 +63,8 @@ static GLuint skyCube, atlasTex[ATLASES], landP, waterP, skyP, postP, brightP,
 static Node nodes[MAXNODE];
 static int countNode = 0, owners[SLOTS], frameNo, drawn, triangles, uploaded,
            evicted, resident;
+/* Main-thread geometry changes invalidate terrain/sea seams, not disk caches. */
+static uint64_t terrainGeometryRevision;
 static int freeNodes[MAXNODE], freeCount, recycleCursor = 6, recycledNodes;
 static int readyIds[2048], readyCount;
 static int queue[512], qhead, qtail, qcount, quitWorker;
@@ -424,6 +426,7 @@ static int upload(int id) {
   } else
     resident++;
   owners[slot] = id;
+  terrainGeometryRevision++;
   SDL_UnlockMutex(mutex);
   if (oldQuery)
     glDeleteQueries(1, &oldQuery);
@@ -1081,6 +1084,14 @@ static void geometry(GLuint vbo, int lod) {
   glDrawElements(GL_TRIANGLES, indexCount[lod], GL_UNSIGNED_SHORT, (void *)0);
   triangles += indexCount[lod] / 3;
 }
+/* Both globe vertex shaders clamp microdetail to zero beyond 100 m.
+ * Use the containing sphere (including skirts/morph bounds), with 1 m margin,
+ * so every vertex of a simplified patch has exactly zero relief weight. */
+static int terrainFastMode(const Node *n) {
+  V3 delta = add(n->boundCenter, mul(cameraEye, -1));
+  float limit = n->boundRadius + 101;
+  return performanceMode || dot(delta, delta) > limit * limit;
+}
 #include "terrain-batch.h"
 #include "terrain-edges.h"
 #include "water-seams.h"
@@ -1225,10 +1236,11 @@ static void drawScene(void) {
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo[0]);
   float fogHeight = exp2f(-fmaxf(sqrtf(dot(cameraEye,cameraEye))-RADIUS, 0) / 13000.0f);
+  for (int mode = performanceMode; mode < 2; mode++)
   for (int approximation = 0; approximation < 2; approximation++) {
     for (int transition = 0; transition < 2; transition++) {
-      GLuint p = transition ? fadePrograms[performanceMode][approximation]
-                            : landPrograms[performanceMode][approximation];
+      GLuint p = transition ? fadePrograms[mode][approximation]
+                            : landPrograms[mode][approximation];
       glUseProgram(p);
       u1(p, "fogHeightFactor", fogHeight);
       u3(p, "sun", sun);
@@ -1248,8 +1260,7 @@ static void drawScene(void) {
   prepareMeshLODs();
   qsort(selected, selectedCount, sizeof(*selected), nearFirst);
   prepareTextureFades();
-  prepareMorphs();
-  stitchTerrainEdges();
+  prepareTerrainGeometry();
   visibleCount = frustumRejected = horizonRejected = 0;
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
@@ -1278,13 +1289,14 @@ static void drawScene(void) {
     int approximation = fogCoefficients(n, fogHeight, plane);
     cpuFogPatches += approximation;
     gpuFogPatches += !approximation;
+    int mode = terrainFastMode(n);
     int fade = textureFadeFor(selected[i]);
-    landP = fade >= 0 ? fadePrograms[performanceMode][approximation]
-                      : landPrograms[performanceMode][approximation];
+    landP = fade >= 0 ? fadePrograms[mode][approximation]
+                      : landPrograms[mode][approximation];
     glUseProgram(landP);
-    pageUniform = landPageLocations[performanceMode][approximation];
-    originUniform = landOriginLocations[performanceMode][approximation];
-    landEyeUniform = landEyeLocations[performanceMode][approximation];
+    pageUniform = landPageLocations[mode][approximation];
+    originUniform = landOriginLocations[mode][approximation];
+    landEyeUniform = landEyeLocations[mode][approximation];
     if (fade >= 0) {
       pageUniform = uniformLocation(landP, "page");
       originUniform = uniformLocation(landP, "detailOrigin");
@@ -1299,7 +1311,7 @@ static void drawScene(void) {
     if (approximation)
       glUniform4fv(fade >= 0
                        ? uniformLocation(landP, "fogPlane")
-                       : fogPlaneLocations[performanceMode][approximation],
+                       : fogPlaneLocations[mode][approximation],
                    1, plane);
     int atlasIndex = n->slot / 256;
     if (boundAtlas != atlasIndex) {
@@ -1691,6 +1703,7 @@ int main(int argc, char **argv) {
       fogPlaneLocations[mode][approximate] =
           glGetUniformLocation(p, "fogPlane");
     }
+  reflectionLandP = program("globe.vert", "globe-reflection.frag");
   landP = landPrograms[0][0];
   waterP = program("globe-water.vert", "globe-water.frag");
   landEyeUniform = glGetUniformLocation(landP, "eye");
@@ -1727,6 +1740,8 @@ int main(int argc, char **argv) {
     openPad();
   resolution();
   view(viewNo);
+  celestialFrameSpawnMoon(eye,heading);
+  celestial=celestialAt(0,dayOffset,lunarPhaseOffset);sun=celestial.sun;
   if(startMoon) {
     V3 d=norm(mul(moonCenter(),-1));
     eye=add(moonCenter(),mul(d,MOON_RADIUS+moonHeight(moonLocalVector(d))+2.5f));

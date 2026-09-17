@@ -33,6 +33,10 @@ static void warmShaders(void) {
    if(p==landPrograms[mode][fog] || p==fadePrograms[mode][fog]) {
     tex(p,"atlas",0,atlasTex[0]);tex(p,"detailTex",1,detailMap.tex);tex(p,"transitionAtlas",2,transitionAtlas?transitionAtlas:atlasTex[0]);
    }
+  if(p==reflectionLandP) {
+   tex(p,"atlas",0,atlasTex[0]);
+   glUniform4f(uniformLocation(p,"reflectionPlane"),0,0,1,1);
+  }
   if(p==actorP)tex(p,"materialTex",0,actorTex);
   if(p==natureP || p==natureFadeP || p==sunCastP){tex(p,"foliageTex",0,foliageTex);tex(p,"lodMask",1,natureFadeMask);}
   if(p==moonP || p==moonAirP)tex(p,"rockTex",0,moonRock);

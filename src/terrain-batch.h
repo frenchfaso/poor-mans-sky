@@ -26,9 +26,6 @@ static void drawTerrainBatches(void) {
   int done[1024] = {0}, uploads = 0;
   memset(batchedNodes, 0, sizeof(batchedNodes));
   batchDraws = batchPatches = 0;
-  GLuint program = landPrograms[performanceMode][0];
-  glUseProgram(program);
-  glUniform2f(landPageLocations[performanceMode][0], 0, 0);
   Uint64 start = SDL_GetPerformanceCounter();
   for (int i = 0; i < selectedCount; i++) {
     if (done[i] || !batchEligible(i))
@@ -159,13 +156,18 @@ static void drawTerrainBatches(void) {
     }
     TerrainBatch *batch = &terrainBatches[slot];
     batch->used = frameNo;
+    int mode = 1;
+    for (int j = 0; j < members; j++)
+      if (!terrainFastMode(&nodes[selected[group[j]]])) mode = 0;
+    glUseProgram(landPrograms[mode][0]);
+    glUniform2f(landPageLocations[mode][0], 0, 0);
     glBindTexture(GL_TEXTURE_2D, atlasTex[batch->atlas]);
     float period = 100.f / 17;
-    glUniform3f(landOriginLocations[performanceMode][0],
+    glUniform3f(landOriginLocations[mode][0],
                 fmodf(batch->center.x, period), fmodf(batch->center.y, period),
                 fmodf(batch->center.z, period));
     V3 localEye = add(cameraEye, mul(batch->center, -1));
-    glUniform3f(landEyeLocations[performanceMode][0], localEye.x, localEye.y,
+    glUniform3f(landEyeLocations[mode][0], localEye.x, localEye.y,
                 localEye.z);
     glPushMatrix();
     V3 offset = add(batch->center, mul(cameraEye, -1));

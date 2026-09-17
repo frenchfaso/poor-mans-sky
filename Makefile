@@ -5,16 +5,20 @@ CFLAGS = -std=c99 -Wall -Wextra -Ithird_party -march=pentium-m -mtune=pentium-m 
 LIBS = /usr/lib/i386-linux-gnu/libSDL2-2.0.so.0 /usr/lib/i386-linux-gnu/libGL.so.1 -lm -ldl -lpthread
 HEADERS := $(wildcard src/*.h)
 
-.PHONY: all demo materials baker baker-mac clean run FORCE
+.PHONY: all demo materials clouds baker baker-mac clean run FORCE
 all: bin/poor-mans-sky
 demo: bin/poor-mans-sky
 baker: bin/poor-mans-sky-baker
 bin:
 	mkdir -p bin
-bin/poor-mans-sky: src/poor-mans-sky.c $(HEADERS) src/cache-build.h | bin
+bin/poor-mans-sky: src/poor-mans-sky.c $(HEADERS) src/cache-build.h assets/cloud-procedural.rgba | bin
 	$(CC) $(CFLAGS) src/poor-mans-sky.c -o $@ $(LIBS)
-bin/poor-mans-sky-baker: src/poor-mans-sky-baker.c src/poor-mans-sky.c $(HEADERS) src/cache-build.h | bin
+bin/poor-mans-sky-baker: src/poor-mans-sky-baker.c src/poor-mans-sky.c $(HEADERS) src/cache-build.h assets/cloud-procedural.rgba | bin
 	$(CC) $(CFLAGS) src/poor-mans-sky-baker.c -o $@ $(LIBS)
+clouds: assets/cloud-procedural.rgba
+assets/cloud-procedural.rgba: tools/generate-clouds.py
+	python3 tools/generate-clouds.py
+	touch $@
 materials: FORCE
 	python3 tools/generate-materials.py
 src/cache-build.h: materials

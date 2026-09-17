@@ -127,7 +127,36 @@ static int coarseFirst(const void *a, const void *b) {
   float sx = x->size * (1 << x->meshLevel), sy = y->size * (1 << y->meshLevel);
   return sx > sy ? -1 : sx < sy ? 1 : 0;
 }
+typedef struct { int id, slot, lod; GLuint vbo; } TerrainSeamState;
+static TerrainSeamState terrainSeamState[1024];
+static uint64_t terrainSeamRevision;
+static int terrainSeamCount=-1, terrainSeamReused;
+static int seamIdFirst(const void *a,const void *b) {
+  return ((const TerrainSeamState*)a)->id-((const TerrainSeamState*)b)->id;
+}
 static void stitchTerrainEdges(void) {
+  /* Morph/upload changes invalidate both terrain and sea geometry. Cache the
+   * completed pass, including its own VBO updates, only for an identical cover.
+   * Camera motion alone cannot change a seam while mesh LOD stays unchanged. */
+  TerrainSeamState state[1024];
+  for(int i=0;i<selectedCount;i++) {
+    Node *n=&nodes[selected[i]];
+    state[i]=(TerrainSeamState){selected[i],n->slot,n->meshLevel,n->vbo};
+  }
+  terrainSeamReused=0;
+  if(terrainSeamCount==selectedCount && terrainSeamRevision==terrainGeometryRevision) {
+    terrainSeamReused=!memcmp(state,terrainSeamState,selectedCount*sizeof(*state));
+    if(!terrainSeamReused) {
+      /* Usually already in the same order: only sort on a camera reorder. */
+      TerrainSeamState sorted[1024];
+      memcpy(sorted,state,selectedCount*sizeof(*state));
+      qsort(sorted,selectedCount,sizeof(*sorted),seamIdFirst);
+      qsort(terrainSeamState,selectedCount,sizeof(*state),seamIdFirst);
+      terrainSeamReused=!memcmp(sorted,terrainSeamState,selectedCount*sizeof(*state));
+      memcpy(terrainSeamState,state,selectedCount*sizeof(*state));
+    }
+  }
+  if(terrainSeamReused)return;
   uint32_t topologyXor = 0, topologySum = (uint32_t)selectedCount;
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
@@ -136,6 +165,7 @@ static void stitchTerrainEdges(void) {
     topologyXor ^= h;
     topologySum += h;
   }
+  /* Preserve the original ordering of equal-sized patches on rebuilds. */
   int order[1024];
   memcpy(order, selected, selectedCount * sizeof(int));
   qsort(order, selectedCount, sizeof(int), coarseFirst);
@@ -245,4 +275,14 @@ static void stitchTerrainEdges(void) {
     n->vertices = original;
     lodRevision++;
   }
+  memcpy(terrainSeamState,state,selectedCount*sizeof(*state));
+  terrainSeamCount=selectedCount;terrainSeamRevision=terrainGeometryRevision;
+}
+static void prepareTerrainGeometry(void) {
+  deferMorphUploads = 1;
+  prepareMorphs();
+  deferMorphUploads = 0;
+  stitchTerrainEdges();
+  /* Includes unstitched patches and morphs that left the selected cover. */
+  flushMorphUploads();
 }

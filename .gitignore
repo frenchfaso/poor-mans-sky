@@ -5,6 +5,8 @@ cache/
 cache-*/
 screenshots/
 diagnostics/
+# Local research notes and book references; never publish with the repository.
+/wiki/
 *.o
 *.a
 *.so
@@ -28,3 +30,5 @@ core.*
 # Reproducible source materials; generated before fingerprinting/build.
 /assets/ground-procedural.bmp
 /assets/rock-procedural.bmp
+
+/assets/cloud-procedural.rgba

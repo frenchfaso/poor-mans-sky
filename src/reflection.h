@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Local tangent-plane reflection, refreshed every frame (optionally every two). */
 static Target reflectionMap, reflectionBlur;
-static GLuint reflectionBlurP;
+static GLuint reflectionBlurP, reflectionLandP;
 static int reflectionEnabled=1;
 static int reflectionInterval = 1, reflectionUpdates, reflectionMaxGap;
 static V3 reflectionEye;
@@ -63,9 +63,8 @@ static void updateReflection(void) {
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_NORMAL_ARRAY);
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-  GLuint p = landPrograms[1][0];
+  GLuint p = reflectionLandP;
   glUseProgram(p);
-  u1(p, "reflectionPass", 1);
   u1(p, "fogHeightFactor", 0);
   u3(p, "sun", sun);
   u3(p, "fogColor", fogColor);
@@ -95,7 +94,6 @@ static void updateReflection(void) {
     glPopMatrix();
     reflectionDraws++;
   }
-  u1(p, "reflectionPass", 0);
   natureDrawPass(1);
   glFrontFace(GL_CCW);
   /* Blur only the 128-square reflection, not each full-resolution water pixel.
@@ -130,9 +128,6 @@ static void updateReflection(void) {
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_NORMAL_ARRAY);
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-  /* The reflection shares this shader with the main terrain pass. */
-  glUseProgram(p);
-  u1(p, "fogHeightFactor", exp2f(-fmaxf(altitude, 0) / 13000));
   reflectionReady = 1;
   reflectionLastFrame = frameNo;
   reflectionUpdates++;

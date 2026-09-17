@@ -50,10 +50,40 @@ static int morphFor(int id) {
       return i;
   return -1;
 }
-static void morphUpload(Node *n, const Vertex *v) {
+/* At most 24 old morphs can finish and 24 new ones start in one pass.
+ * CPU sources stay alive until stitching finishes; no rendering occurs there. */
+static struct { Node *node; const Vertex *vertices; } pendingMorphUploads[2 * MORPH_SLOTS];
+static int pendingMorphCount, deferMorphUploads;
+static void morphUploadNow(Node *n, const Vertex *v) {
   glBindBuffer(GL_ARRAY_BUFFER, n->vbo);
   glBufferData(GL_ARRAY_BUFFER, NV * sizeof(Vertex), NULL, GL_STREAM_DRAW);
   glBufferSubData(GL_ARRAY_BUFFER, 0, NV * sizeof(Vertex), v);
+}
+static void morphUpload(Node *n, const Vertex *v) {
+  /* Invalidate CPU caches when geometry changes, not when its upload flushes. */
+  terrainGeometryRevision++;
+  int pending = 0;
+  while (pending < pendingMorphCount && pendingMorphUploads[pending].node != n)
+    pending++;
+  if (deferMorphUploads) {
+    if (pending == pendingMorphCount) {
+      if (pendingMorphCount == 2 * MORPH_SLOTS)
+        die("pending morph upload capacity");
+      pendingMorphCount++;
+    }
+    pendingMorphUploads[pending].node = n;
+    pendingMorphUploads[pending].vertices = v;
+    return;
+  }
+  /* The stitched surface supersedes the pending, unstitched morph surface. */
+  if (pending < pendingMorphCount)
+    pendingMorphUploads[pending] = pendingMorphUploads[--pendingMorphCount];
+  morphUploadNow(n, v);
+}
+static void flushMorphUploads(void) {
+  for (int i = 0; i < pendingMorphCount; i++)
+    morphUploadNow(pendingMorphUploads[i].node, pendingMorphUploads[i].vertices);
+  pendingMorphCount = 0;
 }
 static void prepareMorphs(void) {
   if (!morphInitialized) {

@@ -2,6 +2,7 @@
 #define main poor_mans_sky_application_main
 #include "../src/poor-mans-sky.c"
 #undef main
+#include "water-reference.h"
 #define CHECK(x)                                                               \
   do {                                                                         \
     if (!(x)) {                                                                \
@@ -45,6 +46,13 @@ int main(void) {
   for (int i = 0; i < MORPH_SLOTS; i++)
     lodMorphs[i].id = -1;
   stitchTerrainEdges();
+  CHECK(!terrainSeamReused);
+  uint64_t stableRevision=terrainGeometryRevision;
+  stitchTerrainEdges();
+  CHECK(terrainSeamReused && stableRevision==terrainGeometryRevision);
+  int reordered=selected[0];selected[0]=selected[3];selected[3]=reordered;
+  stitchTerrainEdges();CHECK(terrainSeamReused);
+  reordered=selected[0];selected[0]=selected[3];selected[3]=reordered;
   Node *fine = &nodes[6], *coarse = &nodes[7];
   CHECK(fine->stitched);
   for (int k = 1; k < PATCH; k++) {
@@ -60,6 +68,26 @@ int main(void) {
   }
   fine->visible=1;fine->minHeight=-1;
   prepareWaterSeams();
+  CHECK(waterPrepared>0 && !waterReused);
+  CHECK(waterMatchesReference());
+  prepareWaterSeams();CHECK(waterReused && waterPrepared==0);
+  /* Camera ordering does not invalidate an unchanged cover. */
+  int first=selected[0];selected[0]=selected[3];selected[3]=first;
+  prepareWaterSeams();CHECK(waterReused && waterMatchesReference());
+  first=selected[0];selected[0]=selected[3];selected[3]=first;
+  /* A changed coarse source must propagate to dependent wet patches. */
+  float savedHeight=coarse->vertices[0].h;
+  coarse->vertices[0].h-=1; morphUpload(coarse,coarse->vertices);
+  prepareWaterSeams();CHECK(!waterReused && waterMatchesReference());
+  coarse->vertices[0].h=savedHeight; morphUpload(coarse,coarse->vertices);
+  prepareWaterSeams();CHECK(waterMatchesReference());
+  /* Reusing a residency slot must never reuse the previous patch's grid. */
+  int slot=fine->slot;fine->slot=coarse->slot;coarse->slot=slot;
+  memset(seamNeighbors,0,sizeof(seamNeighbors));
+  prepareWaterSeams();CHECK(!waterReused && waterMatchesReference());
+  slot=fine->slot;fine->slot=coarse->slot;coarse->slot=slot;
+  memset(seamNeighbors,0,sizeof(seamNeighbors));
+  prepareWaterSeams();CHECK(waterMatchesReference());
   for(int k=1;k<PATCH;k++) {
     Vertex expected=sampleMesh(waterGrids[coarse->slot],0,k/(float)PATCH,3);
     V3 actual=waterGrids[fine->slot][k*(PATCH+1)+PATCH].p;
@@ -87,6 +115,7 @@ int main(void) {
   }
   coarse->meshLevel = 0;
   stitchTerrainEdges();
+  CHECK(!terrainSeamReused);
   for (int k = 1; k < PATCH; k++) {
     int j = k * (PATCH + 1) + PATCH;
     Vertex *current = fine->stitched ? fine->stitched : fine->vertices;
@@ -94,6 +123,18 @@ int main(void) {
     CHECK(dot(error, error) < .0001f);
   }
   fine->visible=1;fine->minHeight=-1;prepareWaterSeams();
+  CHECK(!waterReused && waterMatchesReference());
+  prepareWaterSeams();CHECK(waterReused);
+  /* A changed cover and a view without water must remain safe. */
+  int savedCount=selectedCount;
+  float savedMinimum=fine->minHeight;
+  selectedCount=1;fine->minHeight=-1;fine->visible=1;
+  memset(seamNeighbors,0,sizeof(seamNeighbors));
+  for(int i=0;i<MAXNODE;i++)previousIndex[i]=-1;
+  previousIndex[selected[0]]=0;
+  prepareWaterSeams();CHECK(waterPrepared==1 && waterMatchesReference());
+  fine->minHeight=1;prepareWaterSeams();CHECK(waterPrepared==0 && !waterReused);
+  fine->minHeight=savedMinimum;selectedCount=savedCount;
   for(int k=1;k<PATCH;k++) {
     Vertex a=waterGrids[fine->slot][k*(PATCH+1)+PATCH],b=waterGrids[coarse->slot][k*(PATCH+1)];
     V3 delta=add(add(a.p,fine->center),mul(add(b.p,coarse->center),-1));CHECK(dot(delta,delta)<.005f);

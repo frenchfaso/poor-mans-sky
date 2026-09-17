@@ -33,6 +33,16 @@ make
 ./run.sh
 ```
 
+On macOS, install SDL2 with Homebrew (`brew install sdl2`), then run
+`./run.sh`. The launcher detects macOS, builds with Clang and the OpenGL
+framework, and opens a window. Both Apple Silicon and Intel Homebrew prefixes
+are discovered through `sdl2-config` or `brew`. Linux keeps the Acer build and
+display setup above.
+
+The Moon's orbit is oriented at startup so it appears above the horizon to the
+right of the default starting view; the player spawn and heading are unchanged.
+The Moon continues its orbit, and `--time` / `--moon-phase` still change its position.
+
 The launcher starts `bin/poor-mans-sky` from `bin/`. You can also run:
 
 ```sh
@@ -40,7 +50,7 @@ cd bin
 ./poor-mans-sky
 ```
 
-Default presentation is exclusive fullscreen at 640×480. `+` and `-` cycle the
+On Linux, default presentation is exclusive fullscreen at 640×480. `+` and `-` cycle the
 available X display modes. Use `--windowed` for a window. F1 lists controls;
 F2 toggles the HUD, F3 wireframe, F4 performance mode, F5 sun shadows,
 F6 advances time, F8 clouds, and F12 captures a screenshot.

@@ -27,5 +27,28 @@ int main(void) {
  V3 away=v3(-2000000,0,0);eye=away;clockTime+=10;advanceCelestial();CHECK(!memcmp(&eye,&away,sizeof(eye)));
  cameraEye=mul(norm(moonCenter()),RADIUS+2);CHECK(moonAtmosphereNeeded());
  cameraEye=moonWorldPoint(point);CHECK(!moonAtmosphereNeeded());
- SDL_DestroyMutex(mutex);SDL_Quit();puts("PASS circular orbit, synchronous rotation, local/world inverse, rotating collision floor, phases, planetshine, attached player, space flight and atmosphere selection");return 0;
+ /* Startup framing changes the orbit, not the observer or solar direction. */
+ for(int spawn=0;spawn<3;spawn++) {
+  V3 up=norm(v3(.3f+spawn*.4f,.7f-spawn*.5f,.8f));
+  V3 observer=mul(up,RADIUS+35),forward=norm(cross(v3(0,1,0),up));
+  V3 savedObserver=observer;
+  celestialFrameSpawnMoon(observer,forward);
+  celestial=celestialAt(0,.12f,.18f);
+  CHECK(!memcmp(&observer,&savedObserver,sizeof(observer)));
+  V3 delta=add(celestial.center,mul(observer,-1));
+  V3 cameraForward=norm(add(mul(forward,cosf(-.24f)),mul(up,sinf(-.24f))));
+  V3 right=norm(cross(cameraForward,up)),cameraUp=cross(right,cameraForward);
+  float z=dot(delta,cameraForward),tx=.5773503f*640/480,ty=.5773503f;
+  CHECK(z>0);
+  CHECK(fabsf(dot(delta,right))+MOON_RADIUS*sqrtf(1+tx*tx)<z*tx);
+  CHECK(fabsf(dot(delta,cameraUp))+MOON_RADIUS*sqrtf(1+ty*ty)<z*ty);
+  CHECK(dot(norm(delta),up)>.05f);
+  for(int step=0;step<96;step++) {
+   celestial=celestialAt(step*dayLength/12,.12f,.18f);
+   CHECK(fabsf(sqrtf(dot(celestial.center,celestial.center))-distance)<.3f);
+   CHECK(dot(moonVector(localNear),mul(norm(moonCenter()),-1))>.99999f);
+   CHECK(fabsf(dot(celestial.x,celestial.y))<1e-6f);
+  }
+ }
+ SDL_DestroyMutex(mutex);SDL_Quit();puts("PASS circular orbit, synchronous rotation, local/world inverse, rotating collision floor, phases, planetshine, attached player, space flight, atmosphere selection and startup Moon framing");return 0;
 }

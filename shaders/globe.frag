@@ -14,10 +14,7 @@ varying vec3 ambientTerm;
 varying vec2 localUV;
 varying float fog;
 varying float reliefWeight;
-varying float terrainHeight;
-uniform float reflectionPass;
 void main(){
- if(reflectionPass>.5 && terrainHeight<.05)discard;
  vec3 n=normalize(normal);
  vec3 w=abs(n);w/=w.x+w.y+w.z;
  vec3 a=texture2D(detailTex,materialPos.yz*.17).rgb;

@@ -22,21 +22,16 @@ static void cloudPrepareCatalog(void) {
 static void cloudInit(void) {
  if(!cloudTex) {
   if(!cloudP)cloudP=program("cloud.vert","cloud.frag");
-  /* Four baked cumulus silhouettes: same sample count at runtime. */
-  unsigned char pixels[128*128*4];
-  for(int variant=0;variant<4;variant++)for(int y=0;y<64;y++)for(int x=0;x<64;x++) {
-    float u=(x-31.5f)/31.5f,v=(y-31.5f)/31.5f;
-    float angle=atan2f(v,u),radius=sqrtf(u*u+v*v);
-    float rim=.79f+.07f*sinf(angle*5+variant*1.7f)+.035f*sinf(angle*9-variant);
-    float edge=clampf((rim-radius)/.21f,0,1);
-    edge=edge*edge*(3-2*edge);
-    float base=clampf((v+.72f)/.24f,0,1);base=base*base*(3-2*base);
-    float billow=.5f+.5f*sinf(u*9+variant)*sinf(v*8+u*3);
-    float density=(.30f+.17f*billow)*edge*base;
-    float shade=clampf(.70f+.20f*v+.10f*billow,.48f,.98f);
-    int i=(((variant/2)*64+y)*128+(variant%2)*64+x)*4;
-    pixels[i]=pixels[i+1]=pixels[i+2]=(unsigned char)(shade*255);pixels[i+3]=(unsigned char)(density*255);
-  }
+  /* Offline density/lighting integration; same atlas size and runtime sample. */
+  unsigned char pixels[128*128*4], header[16];
+  FILE *f = fopen(resourcePath("assets/cloud-procedural.rgba"), "rb");
+  if (!f) die("cloud atlas missing: run make clouds");
+  const unsigned char expected[16] = {'P','M','S','C','L','O','U','D',128,0,0,0,128,0,0,0};
+  int valid = fread(header, 1, sizeof(header), f) == sizeof(header) &&
+              !memcmp(header, expected, sizeof(header)) &&
+              fread(pixels, 1, sizeof(pixels), f) == sizeof(pixels) && fgetc(f) == EOF;
+  fclose(f);
+  if (!valid) die("invalid cloud atlas");
   glGenTextures(1,&cloudTex);glBindTexture(GL_TEXTURE_2D,cloudTex);glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,128,128,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);glGenBuffers(1,&cloudVbo);
  }
