@@ -87,11 +87,29 @@ for the CPU fog and texture transition variants.
 
 `check-voxel-terrain.c` is a headless CPU check: compile like `check-packed.c`.
 It checks cube-face boundaries, coherent lookup against a root traversal,
-BC1 decoding/cache invalidation and height/normal interpolation.
+BC1 decoding/cache invalidation, compact CPU payload equivalence and proxy sampling.
 
 For a live scene, `./run.sh --voxel-check --still --frames 360 --no-preload`
-compares the three CPU payloads with and without hierarchical/horizon skipping
+compares the compact CPU payloads with raw-page sampling, with and without hierarchical/horizon skipping
 every 120 frames. A mismatch terminates the run. Repeat with `--altitude 100`,
 `--altitude 1000 --pitch -0.5` and `--view 2 --voxel-scale 2`.
 This diagnostic includes a second rasterization and must not be used for timing.
 It checks skipping against the same column caster, not against the mesh renderer.
+
+
+`check-voxel-pipeline.c` requires OpenGL. Compile like the other GL checks.
+It verifies proxy VBO contents/reuse, memory accounting, full-mesh fallback,
+return to the caster, complementary GLSL stipple coverage/depth at 25/50/75%,
+and Hi-Z with a known occluder/sky hole plus GPU audit.
+Place the executable in `bin/` and run from there with `--live` to exercise
+an actual scene switching caster → high-altitude mesh → mixed band → caster →
+vertical mesh view → caster over 260 frames. Camera changes are confined to its
+input wrapper. `--altitude 400000 --pitch -1.45` checks orbital fallback;
+`--altitude 1730 --pitch -0.5` exercises the mixed band. Altitude CLI values are
+AGL, whereas renderer thresholds are relative to the reference sphere.
+
+`./run.sh --voxel-hiz-check --frames 480 --still --no-preload --no-vsync`
+audits each Hi-Z rejected box using GPU sample queries. Compare timing with
+`--voxel-terrain` and `--voxel-terrain --voxel-no-hiz`, never with audit enabled.
+Check `VOXEL_HIZ` counts: zero rejected boxes means no culling benefit in that
+pose, even if the run passes. Reflections and shadow casters are excluded.

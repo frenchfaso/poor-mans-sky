@@ -12,6 +12,30 @@ static Node *referenceNode(V3 p,float *u,float *v) {
   return voxelCover[id]?&nodes[id]:NULL;
 }
 int main(void) {
+  V3 forward=v3(1,0,0),right=v3(0,0,1),up=v3(0,1,0);
+  CHECK(voxelViewSupported(v3(0,RADIUS+35,0),forward,right,up));
+  CHECK(voxelViewSupported(v3(0,RADIUS+1750,0),forward,right,up));
+  CHECK(!voxelViewSupported(v3(0,RADIUS+2000,0),forward,right,up));
+  CHECK(!voxelViewSupported(v3(0,RADIUS+400000,0),forward,right,up));
+  CHECK(voxelViewSupported(v3(0,RADIUS+1499,0),forward,right,up));
+  for(int angle=0;angle<=89;angle++) {
+    float a=angle*PI/180;V3 f=v3(cosf(a),-sinf(a),0),u=v3(sinf(a),cosf(a),0);
+    if(angle<=54)CHECK(voxelViewSupported(v3(0,RADIUS+35,0),f,right,u));
+    if(angle==56) {
+      CHECK(voxelViewSupported(v3(0,RADIUS+35,0),f,right,u));
+      float mix=voxelViewMix(v3(0,RADIUS+35,0),f,right,u);CHECK(mix>0 && mix<1);
+    }
+    if(angle>=59)CHECK(!voxelViewSupported(v3(0,RADIUS+35,0),f,right,u));
+  }
+  CHECK(!voxelViewSupported(v3(0,RADIUS+35,0),forward,norm(v3(0,.01f,1)),up));
+  CHECK(voxelViewMix(v3(0,RADIUS+1500,0),forward,right,up)==1);
+  CHECK(voxelViewMix(v3(0,RADIUS+2000,0),forward,right,up)==0);
+  CHECK(fabsf(voxelViewMix(v3(0,RADIUS+1750,0),forward,right,up)-.5f)<.001f);
+  float last=1;
+  for(int altitude=1500;altitude<=2000;altitude++) {
+    float mix=voxelViewMix(v3(0,RADIUS+altitude,0),forward,right,up);
+    CHECK(mix>=0 && mix<=last);last=mix;
+  }
   static Vertex vertices[NV];static unsigned char pixels[PAGE_BYTES];
   int next=6;
   for(int face=0;face<6;face++) {
@@ -59,5 +83,22 @@ int main(void) {
     CHECK(fabsf(h-(3*u*PATCH+5*v*PATCH-20))<.0001f);
     CHECK(fabsf(n.y-1)<1e-6f);
   }
-  puts("voxel terrain: cube boundaries, coherent lookup, BC1 cache, height/normal sampling OK");return 0;
+  /* Compact data must agree with the legacy payload, and slot reuse must
+   * invalidate heights, normals and decoded colors even at identical addresses. */
+  voxelScene=1;nodes[7].slot=0;
+  memset(voxelBlocks,0,sizeof(voxelBlocks));
+  for(int y=0;y<20;y++)for(int x=0;x<20;x++) {
+    float u=x/20.f,v=y/20.f;V3 a,b;unsigned char ca[4],cb[4];
+    voxelCompact=0;float h=voxelHeightAt(&nodes[7],u,v,&a);voxelColor(&nodes[7],u,v,ca);
+    voxelCompact=1;CHECK(h==voxelHeightAt(&nodes[7],u,v,&b));voxelColor(&nodes[7],u,v,cb);
+    CHECK(!memcmp(&a,&b,sizeof(a)));CHECK(!memcmp(ca,cb,4));
+  }
+  vertices[0].h=1234;memset(pixels,0,sizeof(pixels));voxelInvalidateSlot(0);
+  memset(voxelBlocks,0,sizeof(voxelBlocks));
+  CHECK(voxelHeightAt(&nodes[7],0,0,NULL)==1234);
+  unsigned char color[4];voxelColor(&nodes[7],0,0,color);CHECK(color[0]==0 && color[1]==0 && color[2]==0);
+  Vertex proxy[VOXEL_PROXY_VERTS];voxelProxyVertices(&nodes[7],proxy);
+  for(int y=0;y<4;y++)for(int x=0;x<4;x++)CHECK(!memcmp(&proxy[y*4+x],&vertices[y*8*(PATCH+1)+x*8],sizeof(Vertex)));
+  free(voxelPages[0]);
+  puts("voxel terrain: camera/altitude crossfade, cube boundaries, coherent lookup, BC1 cache, compact payload/invalidation, proxy sampling OK");return 0;
 }

@@ -89,8 +89,8 @@ static void updateReflection(void) {
                 radial.z, dot(n->center, radial) - RADIUS);
     glPushMatrix();
     glTranslatef(offset.x, offset.y, offset.z);
-    int lod = n->meshLevel < 3 ? n->meshLevel + 1 : 3;
-    geometry(n->vbo, lod);
+    if(voxelScene && voxelMix>=1)voxelProxyDraw(n);
+    else {int lod = n->meshLevel < 3 ? n->meshLevel + 1 : 3;geometry(n->vbo, lod);}
     glPopMatrix();
     reflectionDraws++;
   }

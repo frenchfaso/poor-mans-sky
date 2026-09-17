@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Experimental CPU heightfield column caster. Only the main planet surface is
- * replaced; auxiliary terrain passes and the Moon retain their original path.
+ * replaced; auxiliary passes use proxies/depth and the Moon stays separate.
  * Samples radial heights from the current streamed cover, never calls elevation.
  * Camera pitch must keep screen-up pointing into the outward radial hemisphere.
  */
-static GLuint voxelTextures[3], voxelProgram;
+static GLuint voxelTextures[3], voxelProgram, voxelShadowP;
 static unsigned char *voxelBuffers[3];
 static int voxelWidth, voxelHeight;
 static unsigned char voxelCover[MAXNODE];
@@ -98,11 +98,45 @@ static void voxelTexel(const Node *n,int x,int y,float *rgb) {
   int index=(y&3)*4+(x&3);
   for(int k=0;k<3;k++)rgb[k]=block->rgb[index][k];
 }
+/* Caster-native CPU layout. Decode only pages actually sampled; residency
+ * slot reuse invalidates them explicitly. This never changes disk cache data. */
+#define VOXEL_GRID ((PATCH+1)*(PATCH+1))
+typedef struct {
+  int id;
+  float height[VOXEL_GRID];
+  PackedNormal normal[VOXEL_GRID];
+  unsigned char color[PAGE*PAGE][3];
+} VoxelPage;
+static VoxelPage *voxelPages[SLOTS];
+static size_t voxelCPUBytes;
+static int voxelCompact=1,voxelWasActive;
+static void voxelInvalidateSlot(int slot) {
+  if(voxelPages[slot])voxelPages[slot]->id=-1;
+}
+static VoxelPage *voxelPage(const Node *n) {
+  if(!voxelScene || !voxelCompact || n->slot<0)return NULL;
+  VoxelPage *p=voxelPages[n->slot];
+  if(!p) {
+    p=malloc(sizeof(*p));if(!p)die("voxel page allocation");
+    p->id=-1;voxelPages[n->slot]=p;voxelCPUBytes+=sizeof(*p);
+  }
+  if(p->id!=(int)(n-nodes)) {
+    for(int i=0;i<VOXEL_GRID;i++) {p->height[i]=n->vertices[i].h;p->normal[i]=n->vertices[i].n;}
+    for(int y=0;y<PAGE;y++)for(int x=0;x<PAGE;x++) {
+      float rgb[3];voxelTexel(n,x,y,rgb);
+      for(int k=0;k<3;k++)p->color[y*PAGE+x][k]=(unsigned char)rgb[k];
+    }
+    p->id=(int)(n-nodes);
+  }
+  return p;
+}
 static void voxelColor(const Node *n,float u,float v,unsigned char *out) {
   float x=3.5f+120*u,y=3.5f+120*v;int ix=(int)x,iy=(int)y;x-=ix;y-=iy;
-  float rgb[3]={0};
+  float rgb[3]={0};VoxelPage *page=voxelPage(n);
   for(int j=0;j<2;j++)for(int i=0;i<2;i++) {
-    float c[3],weight=(i?x:1-x)*(j?y:1-y);voxelTexel(n,ix+i,iy+j,c);
+    float c[3],weight=(i?x:1-x)*(j?y:1-y);
+    if(page)for(int k=0;k<3;k++)c[k]=page->color[(iy+j)*PAGE+ix+i][k];
+    else voxelTexel(n,ix+i,iy+j,c);
     for(int k=0;k<3;k++)rgb[k]+=weight*c[k];
   }
   for(int k=0;k<3;k++)out[k]=(unsigned char)clampf(rgb[k]+.5f,0,255);
@@ -111,18 +145,102 @@ static void voxelColor(const Node *n,float u,float v,unsigned char *out) {
 static float voxelHeightAt(Node *n,float u,float v,V3 *normal) {
   float x=clampf(u*PATCH,0,PATCH-.00001f),y=clampf(v*PATCH,0,PATCH-.00001f);
   int ix=(int)x,iy=(int)y;x-=ix;y-=iy;float h=0;if(normal)*normal=v3(0,0,0);
+  VoxelPage *page=voxelPage(n);
   for(int j=0;j<2;j++)for(int i=0;i<2;i++) {
     const Vertex *p=&n->vertices[(iy+j)*(PATCH+1)+ix+i];
-    float weight=(i?x:1-x)*(j?y:1-y);h+=weight*p->h;
-    if(normal)*normal=add(*normal,mul(unpackNormal(p->n),weight));
+    int at=(iy+j)*(PATCH+1)+ix+i;
+    float weight=(i?x:1-x)*(j?y:1-y);h+=weight*(page?page->height[at]:p->h);
+    if(normal)*normal=add(*normal,mul(unpackNormal(page?page->normal[at]:p->n),weight));
   }
   return h;
 }
-/* A column/Y-buffer representation cannot handle arbitrary roll or a
- * vertical view. Preserve the complete scene using the mesh path there. */
-static int voxelSupported(void) {
-  V3 radial=norm(cameraEye);
-  return dot(viewUp,radial)>.05f && fabsf(dot(viewRight,radial))<.0001f;
+/* Conservative experiment limits, measured above the reference sphere.
+ * With a 60-degree vertical FOV, looking down >=60 degrees puts the bottom
+ * rays behind the column sweep (past nadir). Leave a margin before that. */
+static int voxelViewSupported(V3 position,V3 forward,V3 right,V3 screenUp) {
+  float radius=sqrtf(dot(position,position));
+  if(radius<=0)return 0;
+  V3 radial=mul(position,1/radius);
+  float maxAltitude=2000;
+  float downLimit=sinf(58*PI/180);
+  return radius-RADIUS<maxAltitude && dot(screenUp,radial)>.05f &&
+         fabsf(dot(right,radial))<.0001f && dot(forward,radial)>-downLimit;
+}
+/* Spatial crossfade: no timing lag can carry an invalid caster into orbit.
+ * Smoothstep is flat at both ends; reversing travel reverses the same fade. */
+static float voxelViewMix(V3 position,V3 forward,V3 right,V3 screenUp) {
+  if(!voxelViewSupported(position,forward,right,screenUp))return 0;
+  float radius=sqrtf(dot(position,position));V3 radial=mul(position,1/radius);
+  float altitude=clampf((radius-RADIUS-1500)/500,0,1);
+  float down=-asinf(clampf(dot(forward,radial),-1,1))*180/PI;
+  float angle=clampf((down-55)/3,0,1);
+  float tilt=clampf((fabsf(dot(right,radial))-.00002f)/.00008f,0,1);
+  float t=fmaxf(altitude,fmaxf(angle,tilt));
+  return 1-t*t*(3-2*t);
+}
+/* Complementary 8x8 Bayer masks, expanded to OpenGL's 32x32 stipple.
+ * Stipple affects depth and color equally and needs no extra render target.
+ * Pixel-store bit order is explicit because both masks must agree exactly. */
+static void voxelStipple(int caster) {
+  if(voxelMix<=0 || voxelMix>=1) {glDisable(GL_POLYGON_STIPPLE);return;}
+  GLubyte mask[128];memset(mask,0,sizeof(mask));
+  for(int y=0;y<32;y++)for(int x=0;x<32;x++) {
+    int rank=0;
+    for(int bit=0;bit<3;bit++) {
+      int a=(x>>bit)&1,b=(y>>bit)&1;
+      rank|=((a^b)*2+b)<<(4-2*bit);
+    }
+    int useCaster=(rank+.5f)<voxelMix*64;
+    if(useCaster==caster)mask[y*4+x/8]|=(GLubyte)(128>>(x%8));
+  }
+  glPixelStorei(GL_UNPACK_LSB_FIRST,GL_FALSE);
+  glPolygonStipple(mask);glEnable(GL_POLYGON_STIPPLE);
+}
+static void voxelPrepareTerrain(void) {
+  if(!voxelWasActive) {
+    /* Drop the optional mesh path's transient geometry on entry/re-entry. */
+    for(int i=0;i<countNode;i++) {
+      Node *n=&nodes[i];
+      if(n->vboBytes>VOXEL_PROXY_VERTS*sizeof(Vertex)) {
+        glDeleteBuffers(1,&n->vbo);n->vbo=0;terrainGPUBytes-=n->vboBytes;n->vboBytes=0;
+      }
+      free(n->stitched);n->stitched=NULL;n->edgeKey=0;
+      if(n->slot>=0 && n->pixels) {
+        TerrainMeta meta;memcpy(&meta,n->pixels+PAGE_BYTES,sizeof(meta));
+        n->boundCenter=meta.boundCenter;n->boundHalf=meta.boundHalf;n->boundRadius=meta.boundRadius;
+      }
+    }
+    for(int i=0;i<TERRAIN_BATCHES;i++) {
+      glDeleteBuffers(1,&terrainBatches[i].vbo);glDeleteBuffers(1,&terrainBatches[i].ebo);
+    }
+    memset(terrainBatches,0,sizeof(terrainBatches));batchBytes=0;
+    for(int i=0;i<MORPH_SLOTS;i++)lodMorphs[i].id=-1;
+    memset(previousIndex,255,sizeof(previousIndex));previousCount=0;
+    morphInitialized=1;morphActive=0;fadeInitialized=0;terrainSeamCount=-1;
+    terrainGeometryRevision++;voxelWasActive=1;
+  }
+  /* Only water needs mesh LOD/topology now. No terrain triangle budgeting,
+   * morphs, seam construction, texture fades, sorting or occlusion queries. */
+  for(int i=0;i<previousCount;i++)previousIndex[previousCover[i]]=-1;
+  previousCount=selectedCount;
+  for(int i=0;i<selectedCount;i++) {
+    Node *n=&nodes[selected[i]];
+    n->meshLevel=(n->size>4000 && n->minHeight<0 && n->maxHeight>0)?1:3;
+    previousCover[i]=selected[i];previousIndex[selected[i]]=i;previousLevels[i]=n->meshLevel;
+  }
+}
+static void voxelPrepareMeshFallback(void) {
+  if(voxelWasActive) {
+    morphInitialized=0;previousCount=0;terrainSeamCount=-1;voxelWasActive=0;
+    terrainGeometryRevision++;
+  }
+  for(int i=0;i<selectedCount;i++) {
+    Node *n=&nodes[selected[i]];
+    voxelUploadAtlas(n);
+    if(n->vboBytes!=NV*sizeof(Vertex)) {
+      voxelSetVBO(n,n->vertices,NV*sizeof(Vertex));voxelFallbackUploads++;
+    }
+  }
 }
 static void voxelResize(void) {
   int w=(rw+voxelScale-1)/voxelScale,h=(rh+voxelScale-1)/voxelScale;
@@ -222,6 +340,7 @@ static void voxelRaster(int bounded) {
   }
   SDL_UnlockMutex(mutex);
 }
+#include "voxel-hiz.h"
 static void voxelDraw(void) {
   voxelResize();Uint64 start=SDL_GetPerformanceCounter();
   V3 up=norm(cameraEye);float radius=sqrtf(dot(cameraEye,cameraEye));
@@ -230,11 +349,12 @@ static void voxelDraw(void) {
     size_t bytes=(size_t)voxelWidth*voxelHeight*4;
     unsigned char *saved=malloc(bytes*3);if(!saved)die("voxel validation allocation");
     for(int k=0;k<3;k++)memcpy(saved+bytes*k,voxelBuffers[k],bytes);
-    voxelRaster(0);
+    voxelCompact=0;voxelRaster(0);voxelCompact=1;
     for(int k=0;k<3;k++)if(memcmp(saved+bytes*k,voxelBuffers[k],bytes))
       die("voxel enclosing-sphere culling changed framebuffer");
-    free(saved);printf("VOXEL_CHECK frame=%d bounded/unbounded identical\n",frameNo);
+    free(saved);printf("VOXEL_CHECK frame=%d compact+bounded/raw+unbounded identical\n",frameNo);
   }
+  if(voxelMix>=1)voxelHiZBuild();else voxelHiZFrame=-1;
   Uint64 filled=SDL_GetPerformanceCounter();
   for(int k=0;k<3;k++) {
     glActiveTexture(GL_TEXTURE0+k);glBindTexture(GL_TEXTURE_2D,voxelTextures[k]);
@@ -257,8 +377,30 @@ static void voxelDraw(void) {
     voxelCpuMS=voxelUploadMS=0;voxelSamples=voxelSpans=voxelLookupHits=voxelHorizonStops=voxelSkippedSamples=0;voxelFrames=0;
   }
 }
+/* Reconstruct the receiving surface from the caster's depth. No terrain
+ * triangles or mismatched mesh-depth test are involved in this pass. */
+static void voxelShadowGround(void) {
+  sunReceiverDraws=0;if(!sunReady || wire)return;
+  if(!voxelShadowP)voxelShadowP=program("bake.vert","voxel-shadow.frag");
+  Uint64 start=SDL_GetPerformanceCounter();GLuint p=voxelShadowP;
+  glUseProgram(p);tex(p,"depthTex",0,voxelTextures[2]);tex(p,"shadowTex",1,sunMap.tex);
+  u3(p,"forward",viewForward);u3(p,"right",viewRight);u3(p,"up",viewUp);
+  u2(p,"lens",tanf(PI/6)*width/height,tanf(PI/6));u1(p,"nearPlane",clipNear);
+  u3(p,"eyeDelta",add(cameraEye,mul(sunAnchor,-1)));
+  u3(p,"lightRight",sunRight);u3(p,"lightUp",sunUp);u3(p,"lightDir",sunDirection);
+  u1(p,"strength",.38f*clampf((dot(norm(cameraEye),sun)-.12f)/.18f,0,1));
+  glDisable(GL_DEPTH_TEST);glDisable(GL_CULL_FACE);glDepthMask(GL_FALSE);
+  glEnable(GL_BLEND);glBlendFunc(GL_ZERO,GL_SRC_COLOR);quad();
+  glDisable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_TRUE);glEnable(GL_DEPTH_TEST);glEnable(GL_CULL_FACE);glDepthFunc(GL_LEQUAL);
+  glActiveTexture(GL_TEXTURE0);sunReceiverDraws=1;checkGL("voxel shadow receiver");
+  sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
+}
 static void voxelClose(void) {
   if(voxelTextures[0])glDeleteTextures(3,voxelTextures);
   if(voxelProgram)glDeleteProgram(voxelProgram);
   for(int k=0;k<3;k++)free(voxelBuffers[k]);
+  for(int k=0;k<SLOTS;k++)free(voxelPages[k]);
+  glDeleteBuffers(1,&voxelProxyEBO);glDeleteProgram(voxelShadowP);
+  voxelHiZFree();if(voxelHiZQuery)glDeleteQueries(1,&voxelHiZQuery);
 }

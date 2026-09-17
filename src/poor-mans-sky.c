@@ -40,6 +40,8 @@ typedef struct {
 typedef struct {
   int face, level, x, y, child[4], state, slot, wanted, used;
   GLuint vbo;
+  size_t vboBytes;
+  int atlasReady;
   V3 center;
   float size, minHeight, maxHeight, geomError[4];
   V3 boundCenter, boundHalf;
@@ -98,8 +100,12 @@ static GLint pageUniform, originUniform, landEyeUniform, waterEyeUniform,
 static V3 cameraEye, spawnPoint, viewForward, viewRight, viewUp;
 static int spawnReady;
 static int natureQuality = 1, performanceMode;
-static int voxelTerrain, voxelScale=1, voxelCheck;
-static size_t voxelGPUBytes;
+static int voxelTerrain, voxelScale=1, voxelCheck, voxelScene;
+static size_t voxelGPUBytes, terrainGPUBytes;
+static int voxelHiZ=1,voxelHiZCheck;
+static float voxelMix=1;
+static int voxelHiddenBox(V3 center,V3 half);
+static void voxelInvalidateSlot(int slot);
 static GLuint postQualityP, postPerformanceP, landPrograms[2][2];
 static GLint landPageLocations[2][2], landOriginLocations[2][2],
     landEyeLocations[2][2], fogPlaneLocations[2][2];
@@ -389,7 +395,7 @@ static void measureGeometry(Node *n) {
 }
 static void measureBounds(Node *n);
 static int upload(int id) {
-  if(!vramReserve(NV*sizeof(Vertex)))return 0;
+  if(!vramReserve(voxelTerrain?0:NV*sizeof(Vertex)))return 0;
   SDL_LockMutex(mutex);
   Node *n = &nodes[id];
   if (!n->pixels || n->slot >= 0) {
@@ -418,6 +424,7 @@ static int upload(int id) {
   if (old >= 0) {
     oldQuery = nodes[old].query;
     oldVBO = nodes[old].vbo;
+    terrainGPUBytes-=nodes[old].vboBytes;nodes[old].vboBytes=0;
     nodes[old].query = 0;
     nodes[old].queryPending = 0;
     nodes[old].testedEpoch = 0;
@@ -434,20 +441,25 @@ static int upload(int id) {
     glDeleteQueries(1, &oldQuery);
   if (oldVBO)
     glDeleteBuffers(1, &oldVBO);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, atlasTex[slot / 256]);
-  glCompressedTexSubImage2D(
-      GL_TEXTURE_2D, 0, (slot % 16) * PAGE, ((slot % 256) / 16) * PAGE, PAGE,
-      PAGE, GL_COMPRESSED_RGB_S3TC_DXT1_EXT, PAGE_BYTES, n->pixels);
+  n->atlasReady=0;
+  if(!voxelTerrain) {
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,atlasTex[slot/256]);
+    glCompressedTexSubImage2D(GL_TEXTURE_2D,0,(slot%16)*PAGE,((slot%256)/16)*PAGE,
+      PAGE,PAGE,GL_COMPRESSED_RGB_S3TC_DXT1_EXT,PAGE_BYTES,n->pixels);
+    n->atlasReady=1;
+  }
   TerrainMeta meta;memcpy(&meta,n->pixels+PAGE_BYTES,sizeof(meta));
   n->center=meta.center;n->boundCenter=meta.boundCenter;n->boundHalf=meta.boundHalf;
   n->boundRadius=meta.boundRadius;n->minHeight=meta.minHeight;n->maxHeight=meta.maxHeight;
   memcpy(n->geomError,meta.geomError,sizeof(meta.geomError));
-  glGenBuffers(1, &n->vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, n->vbo);
-  glBufferData(GL_ARRAY_BUFFER, NV * sizeof(Vertex), n->vertices,
-               GL_STATIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  if(!voxelTerrain) {
+    glGenBuffers(1, &n->vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, n->vbo);
+    glBufferData(GL_ARRAY_BUFFER, NV * sizeof(Vertex), n->vertices, GL_STATIC_DRAW);
+    n->vboBytes=NV*sizeof(Vertex);terrainGPUBytes+=n->vboBytes;
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+  }
+  voxelInvalidateSlot(slot);
   SDL_LockMutex(mutex);
   n->slot = slot;
   n->state = 3;
@@ -660,7 +672,7 @@ static void streamUpdate(void) {
   for (int i = 0; i < readyCount && budget; i++) {
     if (upload(readyIds[i])) {
       budget--;
-      bytes += TERRAIN_BYTES + NV * sizeof(Vertex);
+      bytes += TERRAIN_BYTES + (voxelTerrain?0:NV * sizeof(Vertex));
     }
     if (!preloading &&
         (bytes >= 128 * 1024 || (SDL_GetPerformanceCounter() - uploadStart) *
@@ -680,6 +692,7 @@ static void streamUpdate(void) {
       nodes[id].query = 0;
       nodes[id].queryPending = 0;
       nodes[id].testedEpoch = 0;
+      terrainGPUBytes-=nodes[id].vboBytes;nodes[id].vboBytes=0;
       glDeleteBuffers(1, &nodes[id].vbo);
       nodes[id].vbo = 0;
       nodes[id].slot = -1;
@@ -1188,6 +1201,7 @@ static void drawSky(void) {
   quad();
   glDepthMask(GL_TRUE);
 }
+#include "voxel-proxy.h"
 #include "reflection.h"
 #include "sun-shadow.h"
 #include "moon-render.h"
@@ -1238,7 +1252,20 @@ static void drawScene(void) {
   glEnableClientState(GL_NORMAL_ARRAY);
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo[0]);
+  voxelMix=voxelTerrain?voxelViewMix(cameraEye,viewForward,viewRight,viewUp):0;
+  voxelScene=voxelMix>0;
+  int voxelMesh=voxelMix<1;
+  if(voxelTerrain) {
+    static int previousPath=-1;
+    int path=voxelScene?(voxelMesh?2:1):0;
+    if(previousPath!=path) {
+      printf("TERRAIN_RENDERER frame=%d path=%s altitude=%.1f\n",frameNo,
+             path==2?"blend":path==1?"caster":"mesh",sqrtf(dot(cameraEye,cameraEye))-RADIUS);
+      previousPath=path;
+    }
+  }
   float fogHeight = exp2f(-fmaxf(sqrtf(dot(cameraEye,cameraEye))-RADIUS, 0) / 13000.0f);
+  if(voxelMesh)
   for (int mode = performanceMode; mode < 2; mode++)
   for (int approximation = 0; approximation < 2; approximation++) {
     for (int transition = 0; transition < 2; transition++) {
@@ -1260,25 +1287,33 @@ static void drawScene(void) {
   }
   if (wire)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-  prepareMeshLODs();
-  qsort(selected, selectedCount, sizeof(*selected), nearFirst);
-  prepareTextureFades();
-  prepareTerrainGeometry();
+  if(!voxelMesh) voxelPrepareTerrain();
+  else {
+    if(voxelTerrain)voxelPrepareMeshFallback();
+    prepareMeshLODs();
+    qsort(selected, selectedCount, sizeof(*selected), nearFirst);
+    prepareTextureFades();
+    prepareTerrainGeometry();
+  }
   visibleCount = frustumRejected = horizonRejected = 0;
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
     n->visible = nodeVisible(n);
     visibleCount += n->visible;
   }
-  occlusionPrepare();
+  if(!voxelScene)occlusionPrepare();
   gpuCheckpoint("reflection");updateReflection();
   gpuCheckpoint("sun-shadow");sunShadowUpdate();
   gpuCheckpoint("opaque-terrain");
   drawn = 0;
   glActiveTexture(GL_TEXTURE0);
-  int voxelActive=voxelTerrain && voxelSupported();
-  if (voxelActive) voxelDraw();
-  if (!voxelActive && batchingEnabled)
+  if (voxelScene) {
+    voxelStipple(1);voxelDraw();glDisable(GL_POLYGON_STIPPLE);
+    glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,detailMap.tex);
+    glActiveTexture(GL_TEXTURE0);
+  }
+  voxelStipple(0);
+  if (voxelMesh && batchingEnabled)
     drawTerrainBatches();
   else {
     memset(batchedNodes, 0, sizeof(batchedNodes));
@@ -1287,7 +1322,7 @@ static void drawScene(void) {
   int boundAtlas = -1;
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
-    if (voxelActive || !n->visible || n->maxHeight < 0 || batchedNodes[i])
+    if (!voxelMesh || !n->visible || n->maxHeight < 0 || batchedNodes[i])
       continue;
     drawn++;
     float plane[4];
@@ -1336,8 +1371,12 @@ static void drawScene(void) {
     geometry(n->vbo, meshLOD(n));
     glPopMatrix();
   }
-  sunShadowGround();
-  occlusionIssue();
+  if(voxelMesh)sunShadowGround();
+  glDisable(GL_POLYGON_STIPPLE);
+  if(voxelScene) {
+    voxelStipple(1);voxelShadowGround();glDisable(GL_POLYGON_STIPPLE);
+  }
+  else occlusionIssue();
   profileMark(0);
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   prepareWaterSeams();
@@ -1427,7 +1466,7 @@ static void overlay(void) {
   label(28, 54, s, 1.5f);
   SDL_LockMutex(mutex);
   snprintf(s, sizeof(s), "PAGES %d/1024 | WORLD RAM %.1F MiB / OS | QUEUE %d",
-           resident, (ramBytes+moonRAMBytes) / 1048576.0f, qcount+moonQueueCount);
+           resident, (ramBytes+moonRAMBytes+voxelCPUBytes+voxelGPUBytes+voxelHiZBytes) / 1048576.0f, qcount+moonQueueCount);
   SDL_UnlockMutex(mutex);
   label(28, 77, s, 1);
   snprintf(s, sizeof(s), "%d PATCHES | %.0F M/S | LOD ADAPTIVE | PAD %s", drawn,
@@ -1560,6 +1599,10 @@ int main(int argc, char **argv) {
       dayOffset = strtof(argv[++i], NULL);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc)
       worldSeed = (uint32_t)strtoul(argv[++i], NULL, 10);
+    else if (!strcmp(argv[i], "--voxel-no-hiz"))
+      voxelHiZ=0;
+    else if (!strcmp(argv[i], "--voxel-hiz-check"))
+      voxelHiZCheck=voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-check"))
       voxelCheck=voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-terrain"))
@@ -1621,7 +1664,7 @@ int main(int argc, char **argv) {
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-terrain] [--preload|--no-preload] "
-           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check]");
+           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check] [--voxel-no-hiz] [--voxel-hiz-check]");
       return 0;
     } else
       die("unknown argument");
@@ -2185,7 +2228,7 @@ int main(int argc, char **argv) {
   printf("RESULT frames=%d fps=%.2f uploads=%d evictions=%d cache_hits=%d "
          "RAM=%.1fMiB nodes=%d resident=%d\n",
          frameNo, samples ? 1000 * samples / elapsed : 0, uploaded, evicted,
-         ramHits, (ramBytes+moonRAMBytes) / 1048576.0, countNode, resident);
+         ramHits, (ramBytes+moonRAMBytes+voxelCPUBytes+voxelGPUBytes+voxelHiZBytes) / 1048576.0, countNode, resident);
   if (profileSamples) {
     printf("PROFILE samples=%d terrain_ms=%.3f water_ms=%.3f "
            "nature_ms=%.3f sky_ms=%.3f post_ms=%.3f actors_ms=%.3f\n",
@@ -2194,6 +2237,13 @@ int main(int argc, char **argv) {
            profileTimes[3] / profileSamples, profileTimes[4] / profileSamples,
            profileTimes[5] / profileSamples);
   }
+  printf("VOXEL_HIZ enabled=%d tested=%llu culled=%llu gpu_verified=%llu builds=%d quiet_frames=%d build_total_ms=%.3f bytes=%zu\n",voxelTerrain&&voxelHiZ,voxelHiZTests,voxelHiZCulled,voxelHiZVerified,voxelHiZBuilds,voxelHiZQuietFrames,voxelHiZBuildMS,voxelHiZBytes);
+  int fullVBOs=0,proxyVBOs=0;
+  for(int i=0;i<countNode;i++) {
+    fullVBOs+=nodes[i].vboBytes==NV*sizeof(Vertex);
+    proxyVBOs+=nodes[i].vboBytes==VOXEL_PROXY_VERTS*sizeof(Vertex);
+  }
+  printf("TERRAIN_PATH caster=%d terrain_vbo_bytes=%zu full_vbos=%d proxy_vbos=%d proxy_uploads=%d mesh_fallback_uploads=%d caster_ram_bytes=%zu\n",voxelTerrain,terrainGPUBytes,fullVBOs,proxyVBOs,voxelProxyUploads,voxelFallbackUploads,voxelCPUBytes);
   for (int i = 0; i < countNode; i++) {
     free(nodes[i].pixels);
     free(nodes[i].vertices);

@@ -9,7 +9,7 @@ static size_t vramEstimate(void) {
  bytes+=vramTargetBytes(scene)+vramTargetBytes(glow[0])+vramTargetBytes(glow[1]);
  bytes+=vramTargetBytes(noiseMap)+vramTargetBytes(detailMap)+vramTargetBytes(sunMap);
  bytes+=vramTargetBytes(reflectionMap)+vramTargetBytes(reflectionBlur);
- bytes+=(size_t)resident*NV*sizeof(Vertex)+natureGPUBytes;
+ bytes+=terrainGPUBytes+natureGPUBytes;
  for(int i=0;i<MOON_SLOTS;i++)if(moonPatches[i].vbo)bytes+=MOON_VERTS*sizeof(MoonVertex);
  return bytes;
 }
@@ -32,6 +32,7 @@ static int vramReserve(size_t incoming) {
   }
   if(victim<0)break;
   Node *n=&nodes[owners[victim]];glDeleteBuffers(1,&n->vbo);glDeleteQueries(1,&n->query);
+  terrainGPUBytes-=n->vboBytes;n->vboBytes=0;
   n->vbo=n->query=0;n->queryPending=0;n->testedEpoch=0;n->slot=-1;n->state=n->pixels?2:0;
   owners[victim]=-1;resident--;evicted++;
  }

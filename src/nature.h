@@ -794,6 +794,7 @@ static void natureDrawPass(int reflected) {
         (!c->fading && (cullingMode ? !boxInFrustum(c->boundCenter, c->boundHalf)
                      : dot(offset, cullForward) < dist * .55f - 65)))
       continue;
+    if(!reflected && !c->fading && voxelHiddenBox(c->boundCenter,c->boundHalf))continue;
     float t=clampf((SDL_GetTicks()-c->fadeStart)/(float)NATURE_FADE_MS,0,1);t=t*t*(3-2*t);
     GLuint p=overdrawView?overdrawP:c->fading&&!reflected?natureFadeP:natureP;glUseProgram(p);
     for(int old=0;old<(c->fading&&!reflected?2:1);old++) {
@@ -822,6 +823,7 @@ static void natureDrawPass(int reflected) {
     float distance=sqrtf(dot(delta,delta));
     if(distance-radius>(reflected?600:NATURE_VIEW_DISTANCE) ||
        !boxInFrustum(g->boundCenter,g->boundHalf)) continue;
+    if(!reflected && voxelHiddenBox(g->boundCenter,g->boundHalf))continue;
     V3 offset=add(g->center,mul(cameraEye,-1));
     glPushMatrix();glTranslatef(offset.x,offset.y,offset.z);
     u3(natureP,"offset",offset);naturePointers(g->vbo);
