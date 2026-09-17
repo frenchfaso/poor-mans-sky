@@ -5,6 +5,7 @@
 static size_t vramTargetBytes(Target t){return (size_t)t.w*t.h*(t.depth?8:4);}
 static size_t vramEstimate(void) {
  size_t bytes=(waterSeamVBO?sizeof(waterGrids[0]):0)+8u*1048576u+STAR_BYTES+bcMipBytes(1024,4)+2u*1048576u+256u*1024u;
+ bytes+=voxelGPUBytes;
  bytes+=vramTargetBytes(scene)+vramTargetBytes(glow[0])+vramTargetBytes(glow[1]);
  bytes+=vramTargetBytes(noiseMap)+vramTargetBytes(detailMap)+vramTargetBytes(sunMap);
  bytes+=vramTargetBytes(reflectionMap)+vramTargetBytes(reflectionBlur);

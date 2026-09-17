@@ -98,6 +98,8 @@ static GLint pageUniform, originUniform, landEyeUniform, waterEyeUniform,
 static V3 cameraEye, spawnPoint, viewForward, viewRight, viewUp;
 static int spawnReady;
 static int natureQuality = 1, performanceMode;
+static int voxelTerrain, voxelScale=1, voxelCheck;
+static size_t voxelGPUBytes;
 static GLuint postQualityP, postPerformanceP, landPrograms[2][2];
 static GLint landPageLocations[2][2], landOriginLocations[2][2],
     landEyeLocations[2][2], fogPlaneLocations[2][2];
@@ -1191,6 +1193,7 @@ static void drawSky(void) {
 #include "moon-render.h"
 #include "clouds.h"
 #include "vram-budget.h"
+#include "voxel-terrain.h"
 static void drawScene(void) {
   V3 f, r, u;
   cameraBasis(&f, &r, &u);
@@ -1273,7 +1276,9 @@ static void drawScene(void) {
   gpuCheckpoint("opaque-terrain");
   drawn = 0;
   glActiveTexture(GL_TEXTURE0);
-  if (batchingEnabled)
+  int voxelActive=voxelTerrain && voxelSupported();
+  if (voxelActive) voxelDraw();
+  if (!voxelActive && batchingEnabled)
     drawTerrainBatches();
   else {
     memset(batchedNodes, 0, sizeof(batchedNodes));
@@ -1282,7 +1287,7 @@ static void drawScene(void) {
   int boundAtlas = -1;
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
-    if (!n->visible || n->maxHeight < 0 || batchedNodes[i])
+    if (voxelActive || !n->visible || n->maxHeight < 0 || batchedNodes[i])
       continue;
     drawn++;
     float plane[4];
@@ -1555,6 +1560,13 @@ int main(int argc, char **argv) {
       dayOffset = strtof(argv[++i], NULL);
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc)
       worldSeed = (uint32_t)strtoul(argv[++i], NULL, 10);
+    else if (!strcmp(argv[i], "--voxel-check"))
+      voxelCheck=voxelTerrain=1;
+    else if (!strcmp(argv[i], "--voxel-terrain"))
+      voxelTerrain=1;
+    else if (!strcmp(argv[i], "--voxel-scale") && i+1<argc) {
+      voxelScale=atoi(argv[++i]);if(voxelScale<1 || voxelScale>2)die("voxel scale must be 1 or 2");
+    }
     else if (!strcmp(argv[i], "--performance")) {
       performanceMode = 1;
     } else if (!strcmp(argv[i], "--resolution") && i + 1 < argc) {
@@ -1609,7 +1621,7 @@ int main(int argc, char **argv) {
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-terrain] [--preload|--no-preload] "
-           "[--terrain-detail 1] [--texture-detail 1]");
+           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check]");
       return 0;
     } else
       die("unknown argument");
@@ -2193,6 +2205,7 @@ int main(int argc, char **argv) {
   cacheClose();
   SDL_DestroyCond(cond);
   SDL_DestroyMutex(mutex);
+  voxelClose();
   SDL_GL_DeleteContext(context);
   SDL_DestroyWindow(window);
   if (pad)

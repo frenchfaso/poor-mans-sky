@@ -82,3 +82,16 @@ with the specialized opaque/reflection programs in 12 cases: daytime/nighttime
 lighting, fog, and planes that clip all, some or none of the geometry. Limits:
 3/255 maximum and less than 0.5/255 mean error. Also run `check-terrain-detail.c`
 for the CPU fog and texture transition variants.
+
+## Experimental CPU terrain caster
+
+`check-voxel-terrain.c` is a headless CPU check: compile like `check-packed.c`.
+It checks cube-face boundaries, coherent lookup against a root traversal,
+BC1 decoding/cache invalidation and height/normal interpolation.
+
+For a live scene, `./run.sh --voxel-check --still --frames 360 --no-preload`
+compares the three CPU payloads with and without hierarchical/horizon skipping
+every 120 frames. A mismatch terminates the run. Repeat with `--altitude 100`,
+`--altitude 1000 --pitch -0.5` and `--view 2 --voxel-scale 2`.
+This diagnostic includes a second rasterization and must not be used for timing.
+It checks skipping against the same column caster, not against the mesh renderer.

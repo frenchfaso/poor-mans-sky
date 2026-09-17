@@ -71,6 +71,38 @@ Python 3 generates the small procedural source textures during the build.
 No image packages or asset downloads are required. `make clean` removes only
 executables, preserving cache and captures.
 
+## Experimental CPU terrain caster
+
+The `codex/voxel-terrain-experiment` branch provides an opt-in spherical
+heightfield caster inspired by [VoxelSpace](https://github.com/s-macke/VoxelSpace)
+and [Grégory Massal's terrain article](https://www.massal.net/article/voxel/).
+
+```sh
+./run.sh --voxel-terrain
+./run.sh --voxel-terrain --voxel-scale 2
+```
+
+The CPU samples the streamed terrain and produces base color, normals and depth;
+a GLSL 1.20 pass lights/composites it. Vegetation, actors, water, reflections,
+clouds, sky, shadows and the Moon remain enabled. Only the main planet's opaque
+surface is replaced: auxiliary terrain passes and lunar terrain still use meshes.
+Vertical/rolled views automatically use the normal mesh path.
+
+Optimizations include front-to-back Y-buffer occlusion, distance/patch-dependent
+steps, coherent quadtree lookup, deferred normal/color evaluation, a small BC1
+block cache, contiguous column writes and conservative patch/horizon skipping.
+`--voxel-scale 2` quarters terrain buffer pixels and upload bytes, while the
+remaining scene keeps its normal resolution. It trades terrain detail for speed.
+
+This is an experiment, not a faster default renderer. Radial height interpolation
+and constant-depth vertical spans do not match the morphed mesh exactly; shadows
+and ground contact can show stripes. Texture LOD fading is not reproduced.
+On the Acer startup scene, the final 120 frames of a 360-frame run measured
+228 ms/frame (full terrain), 126 ms (half-sized terrain), versus 88 ms for meshes.
+These are single-run comparisons, not guaranteed performance across viewpoints.
+At 640×480 the three RGBA8 payloads add 3.52 MiB of VRAM (0.88 MiB at scale 2),
+and the CPU must generate/upload them each frame. See `tools/README.md` for checks.
+
 ## Cache and offline generation
 
 Both executables use **`./cache` relative to their launch working directory**.
