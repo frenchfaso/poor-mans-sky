@@ -113,7 +113,9 @@ static int voxelCompact=1,voxelWasActive;
 static unsigned long long voxelPayloadRevision;
 static int voxelRasterCache=1;
 static unsigned long long voxelRasterBuilds,voxelRasterReused;
+static void hybridInvalidateSlot(int slot);
 static void voxelInvalidateSlot(int slot) {
+  hybridInvalidateSlot(slot);
   voxelPayloadRevision++;
   if(voxelPages[slot])voxelPages[slot]->id=-1;
 }
@@ -373,14 +375,14 @@ static int voxelRasterDirty(void) {
   saved=key;memcpy(ids,selected,selectedCount*sizeof(int));valid=1;
   return dirty || !voxelRasterCache;
 }
-#include "voxel-ray.h"
+#include "voxel-hybrid.h"
 static void voxelDraw(void) {
+  if(voxelHybrid){hybridDraw();voxelHiZFrame=-1;return;}
   voxelResize();Uint64 start=SDL_GetPerformanceCounter();
   V3 up=norm(cameraEye);float radius=sqrtf(dot(cameraEye,cameraEye));
-  int dirty=voxelRay?0:voxelRasterDirty();
-  if(voxelRay)rayDrawTargets();
-  if(dirty) {voxelRaster(1);voxelRasterBuilds++;}else if(!voxelRay)voxelRasterReused++;
-  if(voxelCheck && !voxelRay && frameNo%120==119) {
+  int dirty=voxelRasterDirty();
+  if(dirty) {voxelRaster(1);voxelRasterBuilds++;}else voxelRasterReused++;
+  if(voxelCheck && frameNo%120==119) {
     size_t bytes=(size_t)voxelWidth*voxelHeight*4;
     unsigned char *saved=malloc(bytes*3);if(!saved)die("voxel validation allocation");
     for(int k=0;k<3;k++)memcpy(saved+bytes*k,voxelBuffers[k],bytes);
@@ -397,7 +399,7 @@ static void voxelDraw(void) {
     }
     free(saved);printf("VOXEL_CHECK frame=%d compact+bounded/raw+unbounded identical\n",frameNo);
   }
-  if(!voxelRay && voxelMix>=1) {
+  if(voxelMix>=1) {
     if(!dirty && voxelHiZ && voxelHiZFrame==frameNo-1)voxelHiZFrame=frameNo;
     else voxelHiZBuild();
   }else voxelHiZFrame=-1;
@@ -426,6 +428,7 @@ static void voxelDraw(void) {
 /* Reconstruct the receiving surface from the caster's depth. No terrain
  * triangles or mismatched mesh-depth test are involved in this pass. */
 static void voxelShadowGround(void) {
+  if(voxelHybrid){hybridShadow();return;}
   sunReceiverDraws=0;if(!sunReady || wire)return;
   if(!voxelShadowP)voxelShadowP=program("bake.vert","voxel-shadow.frag");
   Uint64 start=SDL_GetPerformanceCounter();GLuint p=voxelShadowP;
@@ -443,7 +446,7 @@ static void voxelShadowGround(void) {
   sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
 }
 static void voxelClose(void) {
-  rayClose();
+  hybridClose();
   if(voxelTextures[0])glDeleteTextures(3,voxelTextures);
   if(voxelProgram)glDeleteProgram(voxelProgram);
   for(int k=0;k<3;k++)free(voxelBuffers[k]);

@@ -42,28 +42,9 @@ static size_t ramAvailable(void) {
   fclose(f); return (size_t)-1;
 }
 static void ramLoadingScreen(size_t bytes, int planning) {
-  glBindFramebuffer(GL_FRAMEBUFFER,0);
-  glViewport(0,0,width,height); glUseProgram(0);
-  glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);glDisable(GL_BLEND);
-  glActiveTexture(GL_TEXTURE0);glDisable(GL_TEXTURE_2D);
-  glClearColor(.015f,.025f,.04f,1);glClear(GL_COLOR_BUFFER_BIT);
-  glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,width,height,0,-1,1);
-  glMatrixMode(GL_MODELVIEW);glLoadIdentity();
-  float left=width*.15f,top=height*.48f,span=width*.7f;
   float ratio=ramPreloadTarget?fminf(1,bytes/(float)ramPreloadTarget):1;
-  glColor3f(.13f,.18f,.22f);glBegin(GL_QUADS);
-  glVertex2f(left,top);glVertex2f(left+span,top);glVertex2f(left+span,top+18);glVertex2f(left,top+18);glEnd();
-  glColor3f(.25f,.75f,.85f);glBegin(GL_QUADS);
-  glVertex2f(left,top);glVertex2f(left+span*ratio,top);glVertex2f(left+span*ratio,top+18);glVertex2f(left,top+18);glEnd();
-  glColor3f(.86f,.94f,.97f);char text[160];
-  label(left,top-58,planning?"PLANNING RAM COVER / 360 DEGREES":"PRELOADING CPU RAM / VRAM UNCHANGED",1.5f);
-  snprintf(text,sizeof(text),"RAM %.1f / %.0f MiB | CACHE RAM: OS MANAGED",bytes/1048576.,ramPreloadTarget/1048576.);
-  label(left,top+35,text,1.3f);
-  SDL_LockMutex(diskMutex);
-  snprintf(text,sizeof(text),"DISK %llu | GENERATED %llu",diskHits[1],diskMisses[1]);
-  SDL_UnlockMutex(diskMutex);label(left,top+62,text,1);
-  label(left,top+84,"FIRST FILL MAY TAKE MANY MINUTES / ENTER OR START TO SKIP",1);
-  SDL_GL_SwapWindow(window);
+  char text[120];snprintf(text,sizeof(text),"%.0F / %.0F MIB / ENTER TO SKIP",bytes/1048576.,ramPreloadTarget/1048576.);
+  bootProgress(.93f+.07f*ratio,planning?"PLANNING NEARBY WORLD":"LOADING OR GENERATING NEARBY WORLD",text);
 }
 static int ramPreloadWorld(void) {
   if(!ramPreloadTarget)return 1;

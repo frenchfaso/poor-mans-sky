@@ -22,28 +22,7 @@ static void geoProgress(const char *stage, float progress) {
     if (e.type == SDL_QUIT ||
         (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE))
       die("loading cancelled");
-  SDL_SetWindowTitle(window, stage);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glViewport(0, 0, width, height);
-  glUseProgram(0);
-  glDisable(GL_DEPTH_TEST);
-  glClearColor(.015f, .025f, .04f, 1);
-  glClear(GL_COLOR_BUFFER_BIT);
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  glOrtho(0, width, height, 0, -1, 1);
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-  glColor3f(.25f, .75f, .85f);
-  glBegin(GL_QUADS);
-  glVertex2f(width * .15f, height * .5f);
-  glVertex2f(width * (.15f + .7f * progress), height * .5f);
-  glVertex2f(width * (.15f + .7f * progress), height * .5f + 18);
-  glVertex2f(width * .15f, height * .5f + 18);
-  glEnd();
-  label(width * .15f, height * .5f - 50, "POOR MAN'S SKY / GENERATING", 2);
-  label(width * .15f, height * .5f + 40, stage, 1.4f);
-  SDL_GL_SwapWindow(window);
+  bootProgress(.10f+.25f*progress,stage,NULL);
 }
 static int geoIndex(int x, int y) {
   if (y < 0) {

@@ -14,6 +14,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #define PI 3.14159265358979323846f
 #define RADIUS 200000.0f
 #define PAGE 128
@@ -100,8 +104,8 @@ static GLint pageUniform, originUniform, landEyeUniform, waterEyeUniform,
 static V3 cameraEye, spawnPoint, viewForward, viewRight, viewUp;
 static int spawnReady;
 static int natureQuality = 1, performanceMode;
-static int voxelTerrain, voxelScale=1, voxelCheck, voxelScene,voxelRay,voxelRayAudit,voxelRayBench;
-static size_t voxelGPUBytes, terrainGPUBytes,voxelRayGPUBytes;
+static int voxelTerrain, voxelScale=1, voxelCheck, voxelScene,voxelHybrid;
+static size_t voxelGPUBytes, terrainGPUBytes,hybridGPUBytes;
 static int voxelHiZ=1,voxelHiZCheck;
 static float voxelMix=1;
 static int voxelHiddenBox(V3 center,V3 half);
@@ -125,6 +129,7 @@ static V3 eye, sun = {.6f, .5f, .6f}, heading;
 static float pitch = -1.48f, clockTime, fps;
 static size_t vramEstimate(void);
 static int vramReserve(size_t incoming);
+static int hybridEvict(void);
 static int moonWorkPending(void); /* Called with the shared streaming mutex. */
 static void moonStreamWork(void); /* Enters/leaves with that mutex held. */
 static int moonReclaimRAM(void);
@@ -132,6 +137,7 @@ static void *streamAlloc(size_t bytes);
 // clang-format off
 #include "cache.h"
 #include "engine-common.h"
+#include "loading.h"
 #include "materials.h"
 #include "stars.h"
 #include "terrain-field.h"
@@ -775,6 +781,8 @@ static void initWorld(void) {
     nodes[id].state = 2;
     ramBytes += TERRAIN_BYTES + NV * sizeof(Vertex);
     upload(id);
+    char stage[80];snprintf(stage,sizeof(stage),"LOADING TERRAIN ROOTS / %d OF 6",f+1);
+    bootProgress(.52f+.08f*(f+1)/6,stage,NULL);
   }
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   (void)moonHeight(v3(0,1,0)); /* Publish immutable crater catalog before worker starts. */
@@ -1302,12 +1310,12 @@ static void drawScene(void) {
     visibleCount += n->visible;
   }
   if(!voxelTerrain)occlusionPrepare();
+  staticPlanetMainDraws=staticPlanetReflectionDraws=0;
   gpuCheckpoint("reflection");updateReflection();
   gpuCheckpoint("sun-shadow");sunShadowUpdate();
   gpuCheckpoint("opaque-terrain");
   drawn = 0;
   glActiveTexture(GL_TEXTURE0);
-  if(voxelRay && voxelScene)staticPlanetDraw(0,norm(cameraEye));
   if (voxelScene) {
     voxelStipple(1);voxelDraw();glDisable(GL_POLYGON_STIPPLE);
     glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,detailMap.tex);
@@ -1442,49 +1450,7 @@ static void drawScene(void) {
   glDepthRange(0, 1);
   profileMark(3);
 }
-static void overlay(void) {
-  glUseProgram(0);
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_CULL_FACE);
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  glOrtho(0, width, height, 0, -1, 1);
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glColor4f(.015, .025, .04, .8);
-  glBegin(GL_QUADS);
-  glVertex2f(16, 16);
-  glVertex2f(520, 16);
-  glVertex2f(520, 120);
-  glVertex2f(16, 120);
-  glEnd();
-  glColor4f(.86, .94, .97, 1);
-  label(28, 28, "POOR MAN'S SKY", 2);
-  char s[160];
-  snprintf(s, sizeof(s), "%.1F FPS | %d X %d | %s | ALT %.0F M", fps, rw, rh,
-           nearMoon(eye)?(flying?"MOON FLY":"MOON WALK"):(flying ? "FLY" : "WALK"), bodyAltitude(eye));
-  label(28, 54, s, 1.5f);
-  SDL_LockMutex(mutex);
-  snprintf(s, sizeof(s), "PAGES %d/1024 | WORLD RAM %.1F MiB / OS | QUEUE %d",
-           resident, (ramBytes+moonRAMBytes+voxelCPUBytes+voxelGPUBytes+voxelHiZBytes) / 1048576.0f, qcount+moonQueueCount);
-  SDL_UnlockMutex(mutex);
-  label(28, 77, s, 1);
-  snprintf(s, sizeof(s), "%d PATCHES | %.0F M/S | LOD ADAPTIVE | PAD %s", drawn,
-           sqrtf(dot(velocity, velocity)), pad ? "ON" : "OFF");
-  label(28, 95, s, 1);
-  V3 destination=nearMoon(eye)?v3(0,0,0):moonCenter(),to=add(destination,mul(eye,-1));
-  float distance=sqrtf(dot(to,to));
-  snprintf(s,sizeof(s),"%s %.1F KM | %s",nearMoon(eye)?"PLANET":"MOON",(distance-(nearMoon(eye)?RADIUS:MOON_RADIUS))/1000,dot(to,viewForward)>0?"AHEAD":"BEHIND");
-  label(28,125,s,1);
-  snprintf(s,sizeof(s),"MOON LIT %.0F%% | ORBIT 8 GAME DAYS",lunarIlluminatedFraction(eye)*100);label(28,155,s,1);
-  snprintf(s,sizeof(s),"VRAM EST %.1F/56 MIB | RAM/DISK BACKING",vramEstimate()/1048576.0);label(28,140,s,1);
-
-  label(22, height - 24,
-        "RT/LT DRIVE | HOLD A SUPERBOOST | LB/RB YAW | X BRAKE | Y LAND", 1);
-  glDisable(GL_BLEND);
-}
+#include "performance-overlay.h"
 static void render(void) {
   triangles = 0;
   glBindFramebuffer(GL_FRAMEBUFFER, scene.fbo);
@@ -1521,6 +1487,7 @@ static void render(void) {
   u1(postP, "bloom", bloom && !overdrawView ? 1 : 0);
 
   quad();
+  perfEnd();
   if (hud)
     overlay();
   profileMark(4);
@@ -1607,15 +1574,8 @@ int main(int argc, char **argv) {
       voxelHiZCheck=voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-check"))
       voxelCheck=voxelTerrain=1;
-    else if (!strcmp(argv[i], "--voxel-gpu-rays"))
-      voxelRay=voxelTerrain=1;
-    else if (!strcmp(argv[i], "--voxel-ray-bench"))
-      voxelRayBench=voxelRayAudit=voxelRay=voxelTerrain=1;
-    else if (!strcmp(argv[i], "--voxel-ray-audit"))
-      voxelRayAudit=voxelRay=voxelTerrain=1;
-    else if (!strcmp(argv[i], "--voxel-ray-passes") && i+1<argc) {
-      rayPasses=atoi(argv[++i]);if(rayPasses<1 || rayPasses>512)die("ray passes must be 1..512");
-    }
+    else if (!strcmp(argv[i], "--voxel-hybrid"))
+      voxelHybrid=voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-no-cache"))
       voxelRasterCache=0;
     else if (!strcmp(argv[i], "--voxel-terrain"))
@@ -1677,7 +1637,7 @@ int main(int argc, char **argv) {
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-terrain] [--preload|--no-preload] "
-           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check] [--voxel-no-cache] [--voxel-gpu-rays] [--voxel-ray-passes 1..512] [--voxel-ray-audit] [--voxel-ray-bench] [--voxel-no-hiz] [--voxel-hiz-check]");
+           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check] [--voxel-no-cache] [--voxel-hybrid] [--voxel-no-hiz] [--voxel-hiz-check]");
       return 0;
     } else
       die("unknown argument");
@@ -1751,13 +1711,15 @@ int main(int argc, char **argv) {
     die("render target exceeds hardware");
   glDisable(GL_DITHER);
   celestial=celestialAt(0,dayOffset,lunarPhaseOffset);sun=celestial.sun;
-  loadingStage="INDEXING DISK CACHE";cacheInitProgress=cacheLoadingProgress;
+  bootProgress(.02f,"READING SAVED WORLD",NULL);cacheInitProgress=cacheLoadingProgress;
   cacheInit();
-  cacheInitProgress=NULL;loadingStage=NULL;
+  cacheInitProgress=NULL;
+  bootProgress(.10f,"LOADING PLANET LANDSCAPE",NULL);
   geologyInit();
-  materialInit();
-  initMaps();
-  initWorld();
+  bootProgress(.35f,"LOADING MATERIALS",NULL);materialInit();
+  bootProgress(.40f,"BUILDING SKY AND MATERIAL MAPS",NULL);initMaps();
+  bootProgress(.52f,"LOADING TERRAIN ROOTS",NULL);initWorld();
+  bootProgress(.60f,"COMPILING RENDERING SHADERS",NULL);
   for (int mode = 0; mode < 2; mode++)
     for (int approximate = 0; approximate < 2; approximate++) {
       GLuint p = program(approximate ? "globe-cpu-fog.vert" : "globe.vert",
@@ -1804,8 +1766,8 @@ int main(int argc, char **argv) {
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LEQUAL);
   glCullFace(GL_BACK);
-  actorInit();
-  natureInit();
+  bootProgress(.70f,"LOADING SHIP AND CHARACTERS",NULL);actorInit();
+  bootProgress(.75f,"PREPARING VEGETATION",NULL);natureInit();
   if (!still)
     openPad();
   resolution();
@@ -1840,9 +1802,14 @@ int main(int argc, char **argv) {
     V3 d=norm(moonCenter());eye=bodyFloor(mul(d,RADIUS),fmaxf(2.5f,captureAltitude));
     heading=norm(cross(v3(0,0,1),d));pitch=PI*.5f-.01f;flying=0;velocity=v3(0,0,0);preloadMode=0;
   }
+  if(voxelTerrain){bootProgress(.77f,"PREPARING DISTANT PLANET",NULL);staticPlanetInit();}
+  bootProgress(.78f,"WARMING GPU SHADERS",NULL);
+  if(voxelHybrid)hybridInit();
   if(shaderWarmupEnabled)warmShaders();
+  bootProgress(.85f,"PREPARING STARTING SCENE",NULL);
   int preloadRunning =
       preloadMode == 1 || (preloadMode < 0 && !still && !voxelTerrain) ? preloadWorld() : 1;
+  if(preloadRunning)bootProgress(1,"READY",NULL);
   printf("INITIALIZED seconds=%.3f playerAGL=%.1f phase=%.4f pitch=%.3f\n",
          (SDL_GetPerformanceCounter() - boot) /
              (double)SDL_GetPerformanceFrequency(),
@@ -1856,6 +1823,7 @@ int main(int argc, char **argv) {
   int frameSampleCount = 0;
   int samples = 0, windowFrames = 0, running = preloadRunning;
 
+  perfInit();
   while (running) {
     Uint64 start = SDL_GetPerformanceCounter();
     double realDT = (start - prev) / (double)freq;
@@ -2136,8 +2104,7 @@ int main(int argc, char **argv) {
       profileStamp = SDL_GetPerformanceCounter();
       profileSamples++;
     }
-    if(voxelRayBench)rayPasses=frameNo<480?64:256;
-    gpuCheckpoint("render-begin");render();gpuCheckpoint("render-end");
+    gpuCheckpoint("render-begin");perfBegin();render();gpuCheckpoint("render-end");
     if (frameNo == 0) {
       glFinish();
       checkGL("first frame");
@@ -2149,6 +2116,7 @@ int main(int argc, char **argv) {
     if (taking || (frames && frameNo == frames - 1)) {
       if (taking)
         screenshot(capture ? capture : "screenshots/poor-mans-sky.ppm");
+      printf("TERRAIN_SURFACE hybrid=%d mix=%.3f main_static_draws=%d reflection_static_draws=%d\n",voxelHybrid,voxelMix,staticPlanetMainDraws,staticPlanetReflectionDraws);
       printf("MOON patches=%d generated=%d near_clip=%.1f\n",moonDraws,moonBuilds,clipNear);
       printf("CLOUDS enabled=%d sprites=%d screen_area=%.2f OCCLUSION_AUTO active=%d cooldown=%d\n",cloudsEnabled,cloudDrawCount,cloudScreenArea,occlusionActive,occlusionCooldown);
       printf("CPU_FOG patches=%d exact_gpu=%d max_error=0.003\n", cpuFogPatches,
@@ -2186,11 +2154,7 @@ int main(int argc, char **argv) {
     }
     gpuCheckpoint("swap-begin");SDL_GL_SwapWindow(window);gpuCheckpoint("swap-end");
     double ms = (SDL_GetPerformanceCounter() - start) * 1000.0 / freq;
-    if(voxelRayBench) {
-      static double rayWindowMS;static int rayWindowN;
-      if(frameNo%120!=119 && !taking){rayWindowMS+=ms;rayWindowN++;}
-      if(frameNo%120==119){printf("GPU_RAY_BENCH frame=%d passes=%d mean_ms=%.3f samples=%d\n",frameNo,rayPasses,rayWindowMS/rayWindowN,rayWindowN);rayWindowMS=0;rayWindowN=0;}
-    }
+    perfFrame(ms);
     if (frameNo > 10 && !taking) {
       frameSamples[frameSampleCount++ % 4096] = ms;
       elapsed += ms;
@@ -2259,7 +2223,7 @@ int main(int argc, char **argv) {
            profileTimes[5] / profileSamples);
   }
   printf("VOXEL_CACHE raster_builds=%llu raster_reused=%llu static_builds=%d static_bytes=%zu\n",voxelRasterBuilds,voxelRasterReused,staticPlanetBuilds,staticPlanetBytes);
-  printf("VOXEL_HIZ enabled=%d tested=%llu culled=%llu gpu_verified=%llu builds=%d quiet_frames=%d build_total_ms=%.3f bytes=%zu\n",voxelTerrain&&!voxelRay&&voxelHiZ,voxelHiZTests,voxelHiZCulled,voxelHiZVerified,voxelHiZBuilds,voxelHiZQuietFrames,voxelHiZBuildMS,voxelHiZBytes);
+  printf("VOXEL_HIZ enabled=%d tested=%llu culled=%llu gpu_verified=%llu builds=%d quiet_frames=%d build_total_ms=%.3f bytes=%zu\n",voxelTerrain&&!voxelHybrid&&voxelHiZ,voxelHiZTests,voxelHiZCulled,voxelHiZVerified,voxelHiZBuilds,voxelHiZQuietFrames,voxelHiZBuildMS,voxelHiZBytes);
   int fullVBOs=0,proxyVBOs=0;
   for(int i=0;i<countNode;i++) {
     fullVBOs+=nodes[i].vboBytes==NV*sizeof(Vertex);
@@ -2277,7 +2241,7 @@ int main(int argc, char **argv) {
   cacheClose();
   SDL_DestroyCond(cond);
   SDL_DestroyMutex(mutex);
-  voxelClose();
+  perfClose();voxelClose();
   SDL_GL_DeleteContext(context);
   SDL_DestroyWindow(window);
   if (pad)

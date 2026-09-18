@@ -46,6 +46,8 @@ static void warmShaders(void) {
   glBegin(GL_TRIANGLES);glColor4f(1,1,1,1);glNormal3f(0,0,1);
   glTexCoord3f(0,0,-1);glVertex3f(-1,-1,-.2f);glTexCoord3f(1,0,-1);glVertex3f(1,-1,-.2f);glTexCoord3f(.5,1,-1);glVertex3f(0,1,-.2f);glEnd();
   gpuCheckpoint("shader-warmup-submit");glFinish();gpuCheckpoint("shader-warmup-finished");checkGL("shader warmup");count++;
+  char stage[100];snprintf(stage,sizeof(stage),"WARMING GPU SHADERS / %d OF %d",count,linkedProgramCount);
+  bootProgress(.78f+.07f*count/linkedProgramCount,stage,NULL);
  }
  glMatrixMode(GL_MODELVIEW);glPopMatrix();glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
  glBindFramebuffer(GL_FRAMEBUFFER,oldFbo);glUseProgram(glIsProgram(oldProgram)?oldProgram:0);glPopClientAttrib();glPopAttrib();

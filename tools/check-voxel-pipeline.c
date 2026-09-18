@@ -10,6 +10,7 @@ static int pipelinePoll(SDL_Event *event);
 static int liveCheck;
 static int pipelinePoll(SDL_Event *event) {
   if(liveCheck) {
+    if(voxelScene && voxelMix==1 && staticPlanetMainDraws)die("static mesh underneath caster");
     if(frameNo==60)eye=mul(norm(eye),RADIUS+3000);
     if(frameNo==100) {
       if(voxelScene)die("altitude did not select static fallback");
@@ -33,9 +34,9 @@ static int pipelinePoll(SDL_Event *event) {
 }
 #define CHECK(x) do { if(!(x)) { fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x);return 1; } } while(0)
 int main(int argc,char **argv) {
-  if(argc>1 && !strcmp(argv[1],"--live")) {
+  if(argc>1 && (!strcmp(argv[1],"--live") || !strcmp(argv[1],"--live-hybrid"))) {
     liveCheck=1;
-    char *args[]={argv[0],"--windowed","--voxel-terrain","--frames","260","--still","--no-preload","--no-vsync"};
+    char *args[]={argv[0],"--windowed",!strcmp(argv[1],"--live-hybrid")?"--voxel-hybrid":"--voxel-terrain","--frames","260","--still","--no-preload","--no-vsync"};
     CHECK(!poor_mans_sky_application_main(sizeof(args)/sizeof(args[0]),args));
     CHECK(staticPlanetBuilds==1 && voxelFallbackUploads==0 && voxelProxyUploads==0);
     CHECK(morphStarted==0 && textureTransitions==0 && batchBytes==0);

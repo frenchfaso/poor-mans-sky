@@ -5,7 +5,7 @@
 #define STATIC_PLANET_INDICES (36*STATIC_PLANET_SIDE*STATIC_PLANET_SIDE)
 typedef struct { V3 p; PackedNormal n; unsigned char color[4]; } StaticPlanetVertex;
 static GLuint staticPlanetVBO,staticPlanetEBO,staticPlanetP;
-static int staticPlanetBuilds;
+static int staticPlanetBuilds,staticPlanetMainDraws,staticPlanetReflectionDraws;
 static size_t staticPlanetBytes;
 static void staticPlanetBuild(StaticPlanetVertex *vertices,unsigned short *indices) {
   int side=STATIC_PLANET_SIDE,span=side+1;
@@ -72,6 +72,7 @@ static void staticPlanetGeometry(void) {
   glDisableClientState(GL_COLOR_ARRAY);glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 static void staticPlanetDraw(int reflection,V3 radial) {
+  if(reflection)staticPlanetReflectionDraws++;else staticPlanetMainDraws++;
   staticPlanetInit();if(!staticPlanetP)staticPlanetP=program("static-planet.vert","static-planet.frag");
   GLuint p=staticPlanetP;glUseProgram(p);
   u3(p,"eye",cameraEye);u3(p,"sun",sun);u3(p,"sunLight",sunLight);u3(p,"ambientLight",ambientLight);

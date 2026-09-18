@@ -131,28 +131,47 @@ It also verifies existing-key updates, retirement, reclamation and revival.
 For startup regressions, run `./run.sh --voxel-terrain --frames 120` without
 `--still` or `--no-preload`: these previously masked the normal startup path.
 
-## Experimental fragment-shader terrain raycaster
+## Experimental persistent hybrid terrain
 
-`--voxel-gpu-rays` selects a separate GPU intersection backend in the voxel
-experiment branch. Try `./run.sh --voxel-gpu-rays --voxel-scale 2
---voxel-ray-passes 64`. The CPU bakes a cached 512×512 curved tangent heightfield;
-all per-pixel intersection steps execute in GLSL 1.20, one step per RGBA8
-ping-pong pass. `--voxel-ray-passes` accepts 1–512. This is a diagnostic prototype,
-not a quality-equivalent replacement: exhausted rays expose the coarse static
-mesh, and distant terrain can have holes/stripes. CPU Hi-Z is inactive in this
-backend; regular mesh depth testing, water, reflections, shadows and other scene
-objects remain active. No runtime GPU readback occurs unless audit is requested.
+`./run.sh --voxel-hybrid` replaces the old `--voxel-gpu-rays` backend. Terrain
+samples are uploaded once per resident block (an 8 MiB LRU cache, 16-byte
+vertices with locally quantized positions). GLSL 1.20
+projects grid lines into downward curtains; hardware depth chooses the visible
+surface. No per-pixel CPU/GPU ray search, CPU-generated screen spans, framebuffer
+readback, or static mesh underneath the near terrain. The static welded planet
+remains for distant views, crossfade and reflections. Other scene objects remain
+active; shadows reuse the curtains with an equal-depth receiver pass.
 
-`check-voxel-ray.c` requires OpenGL. Compile like the other GL checks, run from
-the repository root. It compares hit coverage and ray depths with a planar
-analytic reference at 16/64 steps, including upward sky rays; checks that no CPU
-rasterization is used. It also exercises the R300-compatible packed distance and
-companded height formats. Tested on Apple M3 and Acer RV350/Mesa 22.3.6.
+This is an approximation: depth and relief are sampled along grid lines, with
+possible banding and orientation changes. It requires visual/hardware evaluation.
+`--voxel-terrain` remains the CPU reference. `--voxel-scale` only controls that CPU
+backend; hybrid uses scene resolution. CPU Hi-Z is inactive for hybrid; normal
+GPU depth testing remains active. `HYBRID` reports persistent builds/reuse,
+evictions, geometry and bytes. `TERRAIN_SURFACE` must report zero main static draws
+when mix is 1. Benchmark complete streamed scenes, not the first few frames.
 
-`--voxel-ray-audit` additionally runs the CPU caster and reads back GPU depth every
-120 frames to report missing/extra terrain pixels and depth disagreement. It is
-an explicit correctness diagnostic, not a performance mode. `--voxel-ray-bench`
-uses this audit, warms the scene for 360 frames, measures 64 steps through frame
-479 and 256 steps thereafter. Use `--frames 600 --still --altitude 2 --pitch 0
---voxel-scale 2 --no-vsync --windowed`; `GPU_RAY_BENCH` windows omit audit/capture
-frames. Aggregate `RESULT` FPS still includes warmup and audit overhead.
+`check-voxel-hybrid.c` (OpenGL) checks analytic plane coverage/depth, draw-order
+independence, index bounds, immutable sample contents, reuse on camera/stride
+changes, slot invalidation and memory accounting. Compile like the other GL
+checks. `check-voxel-pipeline --live-hybrid`, run from `bin/`, exercises actual
+caster → far mesh → blend → caster → vertical fallback → caster transitions and
+asserts that no static surface is drawn under the full caster.
+
+## Performance HUD and startup
+
+F2 toggles the minimal HUD: large FPS, a 20-second CPU/GPU time graph and current
+RAM/GPU-memory graphs. CPU is process CPU time per frame, including workers and
+excluding waits. GPU is asynchronous elapsed render time, excluding the HUD and
+swap; unsupported/unavailable timers show N/A. These overlapping times are not
+percent utilization and should not be added. No blocking query readback is used.
+RAM is current process RSS (including driver mappings); GPU EST is engine-counted
+allocations against the 56 MiB target budget, not physical driver residency.
+
+One monotonic bar spans indexing, geology, materials, shaders, scene preload and
+optional RAM preload. Its weights indicate completed phases, not predicted time.
+Cached, generated and skipped phases share this same bar. The geology UI change
+preserves payload identities via `cache-compat.json`; generators are unchanged.
+
+`check-performance-ui.c` (OpenGL) checks monotonic progress, GL state restoration
+with a deleted shader, current RSS, history wrap and unavailable GPU timing. Build
+like other GL checks and run from the repository root or `bin/`.
