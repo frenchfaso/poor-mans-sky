@@ -15,10 +15,12 @@ int main(void) {
   bootProgress(.2f,"LOADING TERRAIN ROOTS",NULL);CHECK(bootProgressValue==.6f);
   perfInit();CHECK(perfResidentMiB()>0);CHECK(perfCPUClock()>=0);
   if(perfVRAMActual)CHECK(perfVRAMMiB>=0 && perfVRAMCapacity>0 && perfVRAMNext==.5);
+  overlay();CHECK(glGetError()==GL_NO_ERROR); /* Empty startup history. */
   perfBegin();glClear(GL_COLOR_BUFFER_BIT);perfEnd();glFinish(); /* test-only sync */
   perfBegin();perfEnd();CHECK(!perfResult64 || perfGPUFrames>0);
   perfFrame(101);CHECK(perfCount==1 && perfHistory[0].cpu>=0 && perfHistory[0].ram>0);
   if(perfVRAMActual)CHECK(perfVRAMNext==.5); /* No driver poll on every HUD sample. */
+  overlay();CHECK(glGetError()==GL_NO_ERROR); /* A single point has no segment. */
   int timerAvailable=perfResult64!=NULL;
   for(int i=0;i<PERF_HISTORY+3;i++)perfFrame(101);
   CHECK(perfCount==PERF_HISTORY);fps=60;overlay();CHECK(glGetError()==GL_NO_ERROR);

@@ -172,6 +172,9 @@ software counters without GPU waits, register sampling or framebuffer readback.
 GPU EST is the fallback: engine-counted allocations against the 56 MiB budget.
 Unsupported, inaccessible or ambiguous multi-GPU devices use that estimate.
 R300 GPU timing stays N/A; memory accounting does not measure GPU utilization.
+Graph curves use thin triangle strips: native line strips caused RV350 lockups
+in the full scene despite passing isolated UI tests. No GPU waits are used to
+work around this. Validate UI changes together with the scene on target hardware.
 
 One monotonic bar spans indexing, geology, materials, shaders, scene preload and
 optional RAM preload. Its weights indicate completed phases, not predicted time.

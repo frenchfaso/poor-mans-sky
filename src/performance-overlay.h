@@ -143,14 +143,17 @@ static float perfValue(PerfPoint p,int field) {
   return field==0?p.cpu:field==1?p.gpu:field==2?p.ram:p.vram;
 }
 static void perfGraph(float x,float y,float w,float h,int field,float maximum) {
+  /* One-pixel ribbons keep the HUD on the triangle rasterizer: native line
+   * strips triggered RV350 lockups when combined with the complete scene. */
   int open=0;
   for(int i=0;i<perfCount;i++) {
     PerfPoint point=perfHistory[(perfHead-perfCount+i+PERF_HISTORY)%PERF_HISTORY];
     double age=perfElapsed-point.time;float v=perfValue(point,field);
     if(age>20)continue;
     if(v<0){if(open)glEnd();open=0;continue;}
-    if(!open){glBegin(GL_LINE_STRIP);open=1;}
-    glVertex2f(x+w*(1-age/20),y+h*(1-clampf(v/maximum,0,1)));
+    if(!open){glBegin(GL_TRIANGLE_STRIP);open=1;}
+    float px=x+w*(1-age/20),py=y+h*(1-clampf(v/maximum,0,1));
+    glVertex2f(px,py-.5f);glVertex2f(px,py+.5f);
   }
   if(open)glEnd();
 }
