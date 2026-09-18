@@ -1920,8 +1920,13 @@ int main(int argc, char **argv) {
         if (k == SDLK_F2)
           hud = !hud;
         if (k == SDLK_F4) {
-          performanceMode = !performanceMode;
+          if (voxelTerrain && !voxelHybrid) {
+            voxelScale = 3 - voxelScale;
+            if (voxelScale == 1)performanceMode = !performanceMode;
+          } else performanceMode = !performanceMode;
           resolution();
+          printf("QUALITY mode=%s caster_scale=%d\n",
+                 performanceMode ? "performance" : "quality", voxelScale);
         }
         if (k == SDLK_F3)
           wire = !wire;
@@ -1940,7 +1945,7 @@ int main(int argc, char **argv) {
               "Flight: LB/RB yaw, X brake, Y land. WASD pitch/roll, Q/R yaw.\n"
               "PgUp/PgDn forward/reverse (hold). F6 advance time. Start pause. "
               "1/2 reset.\n"
-              "+/- resolution; F2 HUD; F4 quality/performance; F3 wireframe; "
+              "+/- resolution; F2 HUD; F4 quality/performance (CPU caster: full/half too); F3 wireframe; "
               "F12 screenshot; "
               "Esc release/exit.",
               window);
