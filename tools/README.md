@@ -96,6 +96,13 @@ every 120 frames. A mismatch terminates the run. Repeat with `--altitude 100`,
 This diagnostic includes a second rasterization and must not be used for timing.
 It checks skipping against the same column caster, not against the mesh renderer.
 
+Keep the caster's ordered floating-point arithmetic: changing its distance
+recurrence can invalidate conservative skips. The elementary vector helpers
+explicitly inline across GCC's function optimization settings; otherwise i686
+builds repeatedly call struct-return helpers inside the sample loop. Clang uses
+a local FP pragma for the same ordering constraint. Attribute-only helper edits
+preserve generated payload identities through `cache-compat.json`.
+
 
 `check-voxel-pipeline.c` requires OpenGL. Compile like the other GL checks.
 It verifies proxy VBO contents/reuse, memory accounting, single-build static mesh reuse,

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-static V3 v3(float x, float y, float z) {
+/* Keep elementary vector operations inline even in the caster's ordered-math
+ * kernel; GCC otherwise emits struct-return calls for every ray sample. */
+static inline __attribute__((always_inline)) V3 v3(float x, float y, float z) {
   V3 v = {x, y, z};
   return v;
 }
-static V3 add(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
-static V3 mul(V3 a, float b) { return v3(a.x * b, a.y * b, a.z * b); }
-static float dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+static inline __attribute__((always_inline)) V3 add(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
+static inline __attribute__((always_inline)) V3 mul(V3 a, float b) { return v3(a.x * b, a.y * b, a.z * b); }
+static inline __attribute__((always_inline)) float dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 static V3 cross(V3 a, V3 b) {
   return v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
             a.x * b.y - a.y * b.x);

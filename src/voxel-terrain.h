@@ -284,6 +284,9 @@ static float voxelCoverMaximum(void) {
 __attribute__((optimize("no-unsafe-math-optimizations")))
 #endif
 static void voxelRaster(int bounded) {
+#if defined(__clang__)
+#pragma clang fp reassociate(off) contract(off)
+#endif
   float maximum=voxelCoverMaximum();
   float outerRadius=RADIUS+maximum+2;
   memset(voxelBlocks,0,sizeof(voxelBlocks));
