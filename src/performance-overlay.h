@@ -167,7 +167,7 @@ static void overlay(void) {
   glColor4f(.91f,.96f,1,1);char text[100];
   snprintf(text,sizeof(text),"%.0F FPS",perfFPS);label(24,24,text,2.5f);
   if(voxelTerrain && !voxelHybrid) {
-    label(144,24,performanceMode?"PERF":"QUALITY",1);
+    label(144,24,performanceMode?"LOW":"HIGH",1);
     snprintf(text,sizeof(text),"%dX%d",(rw+voxelScale-1)/voxelScale,(rh+voxelScale-1)/voxelScale);
     label(144,36,text,1);
   }

@@ -1642,6 +1642,10 @@ int main(int argc, char **argv) {
     } else
       die("unknown argument");
   }
+  if (voxelTerrain && !voxelHybrid) {
+    performanceMode = performanceMode || voxelScale == 2;
+    voxelScale = performanceMode ? 2 : 1;
+  }
   if (textureDetail != 1 || terrainDetail != 1 || natureQuality < 0 ||
       natureQuality > 2 || viewNo < 1 ||
       viewNo > 2 || frames < 0 || !isfinite(lunarPhaseOffset) || (capture && !frames))
@@ -1920,13 +1924,11 @@ int main(int argc, char **argv) {
         if (k == SDLK_F2)
           hud = !hud;
         if (k == SDLK_F4) {
-          if (voxelTerrain && !voxelHybrid) {
-            voxelScale = 3 - voxelScale;
-            if (voxelScale == 1)performanceMode = !performanceMode;
-          } else performanceMode = !performanceMode;
+          performanceMode = !performanceMode;
+          if (voxelTerrain && !voxelHybrid)voxelScale = performanceMode ? 2 : 1;
           resolution();
           printf("QUALITY mode=%s caster_scale=%d\n",
-                 performanceMode ? "performance" : "quality", voxelScale);
+                 performanceMode ? "low" : "high", voxelScale);
         }
         if (k == SDLK_F3)
           wire = !wire;
@@ -1945,7 +1947,7 @@ int main(int argc, char **argv) {
               "Flight: LB/RB yaw, X brake, Y land. WASD pitch/roll, Q/R yaw.\n"
               "PgUp/PgDn forward/reverse (hold). F6 advance time. Start pause. "
               "1/2 reset.\n"
-              "+/- resolution; F2 HUD; F4 quality/performance (CPU caster: full/half too); F3 wireframe; "
+              "+/- resolution; F2 HUD; F4 high/low (CPU caster: full/half); F3 wireframe; "
               "F12 screenshot; "
               "Esc release/exit.",
               window);

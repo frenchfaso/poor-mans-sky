@@ -55,10 +55,10 @@ available X display modes. Use `--windowed` for a window. F1 lists controls;
 F2 toggles the HUD, F3 wireframe, F4 performance mode, F5 sun shadows,
 F6 advances time, F8 clouds, and F12 captures a screenshot.
 
-With `--voxel-terrain`, F4 cycles quality/full → quality/half → performance/full
-→ performance/half. At 640×480, the CPU caster uses 640×480 or 320×240;
+With `--voxel-terrain`, F4 toggles **High** (quality, full-resolution caster) and
+**Low** (performance, half-resolution caster). At 640×480, the caster uses 640×480 or 320×240;
 the rest of the scene keeps its resolution. The HUD shows the selected mode and
-caster dimensions. `--voxel-scale 1|2` selects the initial caster resolution.
+caster dimensions. `--voxel-scale 2` or `--performance` starts in Low; the default is High.
 The polygonal and `--voxel-hybrid` renderers retain the quality/performance toggle.
 
 Walk: WASD and mouse, Space/right mouse for the jetpack, E/F to board/land.
