@@ -373,12 +373,14 @@ static int voxelRasterDirty(void) {
   saved=key;memcpy(ids,selected,selectedCount*sizeof(int));valid=1;
   return dirty || !voxelRasterCache;
 }
+#include "voxel-ray.h"
 static void voxelDraw(void) {
   voxelResize();Uint64 start=SDL_GetPerformanceCounter();
   V3 up=norm(cameraEye);float radius=sqrtf(dot(cameraEye,cameraEye));
-  int dirty=voxelRasterDirty();
-  if(dirty) {voxelRaster(1);voxelRasterBuilds++;}else voxelRasterReused++;
-  if(voxelCheck && frameNo%120==119) {
+  int dirty=voxelRay?0:voxelRasterDirty();
+  if(voxelRay)rayDrawTargets();
+  if(dirty) {voxelRaster(1);voxelRasterBuilds++;}else if(!voxelRay)voxelRasterReused++;
+  if(voxelCheck && !voxelRay && frameNo%120==119) {
     size_t bytes=(size_t)voxelWidth*voxelHeight*4;
     unsigned char *saved=malloc(bytes*3);if(!saved)die("voxel validation allocation");
     for(int k=0;k<3;k++)memcpy(saved+bytes*k,voxelBuffers[k],bytes);
@@ -395,7 +397,7 @@ static void voxelDraw(void) {
     }
     free(saved);printf("VOXEL_CHECK frame=%d compact+bounded/raw+unbounded identical\n",frameNo);
   }
-  if(voxelMix>=1) {
+  if(!voxelRay && voxelMix>=1) {
     if(!dirty && voxelHiZ && voxelHiZFrame==frameNo-1)voxelHiZFrame=frameNo;
     else voxelHiZBuild();
   }else voxelHiZFrame=-1;
@@ -441,6 +443,7 @@ static void voxelShadowGround(void) {
   sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
 }
 static void voxelClose(void) {
+  rayClose();
   if(voxelTextures[0])glDeleteTextures(3,voxelTextures);
   if(voxelProgram)glDeleteProgram(voxelProgram);
   for(int k=0;k<3;k++)free(voxelBuffers[k]);

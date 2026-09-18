@@ -130,3 +130,29 @@ checks that saturation does not trigger repeated whole-table compactions.
 It also verifies existing-key updates, retirement, reclamation and revival.
 For startup regressions, run `./run.sh --voxel-terrain --frames 120` without
 `--still` or `--no-preload`: these previously masked the normal startup path.
+
+## Experimental fragment-shader terrain raycaster
+
+`--voxel-gpu-rays` selects a separate GPU intersection backend in the voxel
+experiment branch. Try `./run.sh --voxel-gpu-rays --voxel-scale 2
+--voxel-ray-passes 64`. The CPU bakes a cached 512×512 curved tangent heightfield;
+all per-pixel intersection steps execute in GLSL 1.20, one step per RGBA8
+ping-pong pass. `--voxel-ray-passes` accepts 1–512. This is a diagnostic prototype,
+not a quality-equivalent replacement: exhausted rays expose the coarse static
+mesh, and distant terrain can have holes/stripes. CPU Hi-Z is inactive in this
+backend; regular mesh depth testing, water, reflections, shadows and other scene
+objects remain active. No runtime GPU readback occurs unless audit is requested.
+
+`check-voxel-ray.c` requires OpenGL. Compile like the other GL checks, run from
+the repository root. It compares hit coverage and ray depths with a planar
+analytic reference at 16/64 steps, including upward sky rays; checks that no CPU
+rasterization is used. It also exercises the R300-compatible packed distance and
+companded height formats. Tested on Apple M3 and Acer RV350/Mesa 22.3.6.
+
+`--voxel-ray-audit` additionally runs the CPU caster and reads back GPU depth every
+120 frames to report missing/extra terrain pixels and depth disagreement. It is
+an explicit correctness diagnostic, not a performance mode. `--voxel-ray-bench`
+uses this audit, warms the scene for 360 frames, measures 64 steps through frame
+479 and 256 steps thereafter. Use `--frames 600 --still --altitude 2 --pitch 0
+--voxel-scale 2 --no-vsync --windowed`; `GPU_RAY_BENCH` windows omit audit/capture
+frames. Aggregate `RESULT` FPS still includes warmup and audit overhead.
