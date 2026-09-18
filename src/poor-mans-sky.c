@@ -1741,7 +1741,9 @@ int main(int argc, char **argv) {
     die("render target exceeds hardware");
   glDisable(GL_DITHER);
   celestial=celestialAt(0,dayOffset,lunarPhaseOffset);sun=celestial.sun;
+  loadingStage="INDEXING DISK CACHE";cacheInitProgress=cacheLoadingProgress;
   cacheInit();
+  cacheInitProgress=NULL;loadingStage=NULL;
   geologyInit();
   materialInit();
   initMaps();
@@ -1830,7 +1832,7 @@ int main(int argc, char **argv) {
   }
   if(shaderWarmupEnabled)warmShaders();
   int preloadRunning =
-      preloadMode == 1 || (preloadMode < 0 && !still) ? preloadWorld() : 1;
+      preloadMode == 1 || (preloadMode < 0 && !still && !voxelTerrain) ? preloadWorld() : 1;
   printf("INITIALIZED seconds=%.3f playerAGL=%.1f phase=%.4f pitch=%.3f\n",
          (SDL_GetPerformanceCounter() - boot) /
              (double)SDL_GetPerformanceFrequency(),

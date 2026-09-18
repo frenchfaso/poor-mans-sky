@@ -12,7 +12,9 @@
 static void die(const char *s);
 #define DISK_LIMIT (4096ull * 1024 * 1024)
 #define PACK_LIMIT (64u * 1024 * 1024)
+#ifndef CACHE_TABLE
 #define CACHE_TABLE 262144
+#endif
 #define CACHE_PACKS 512
 static const char *cacheDirectory = "./cache";
 static int cacheEnabled = 1;
@@ -34,6 +36,8 @@ typedef struct {
 static CachePack packs[CACHE_PACKS];
 static int packCount, entryCount, *cacheBuckets;
 static CacheEntry *cacheEntries;
+static int cacheDeadEntries,cacheIndexCompactions;
+static void (*cacheInitProgress)(void);
 static uint64_t cacheClock;
 static uint32_t cacheHash(const void *data, size_t size, uint32_t h) {
   const unsigned char *p = data;
@@ -59,15 +63,23 @@ static CacheEntry *entryFind(const uint32_t *key) {
       return &cacheEntries[i];
   return NULL;
 }
+static void entryRetire(CacheEntry *e) {
+  if(e->pack>=0) {e->pack=-1;cacheDeadEntries++;}
+}
 static void entryPut(int pack, const uint32_t *h) {
   CacheEntry *e = entryFind(h);
   if (!e) {
     if (entryCount == CACHE_TABLE) {
+      /* A saturated index with no evictions has nothing to reclaim. Avoid
+       * rescanning the entire table for every remaining startup record. */
+      if(!cacheDeadEntries)return;
+      cacheIndexCompactions++;
       /* Reclaim entries belonging to evicted packs during long explorations. */
       int live = 0;
       for (int i = 0; i < entryCount; i++)
         if (cacheEntries[i].pack >= 0) cacheEntries[live++] = cacheEntries[i];
       entryCount = live;
+      cacheDeadEntries=0;
       for (int i = 0; i < CACHE_TABLE; i++) cacheBuckets[i] = -1;
       for (int i = 0; i < live; i++) {
         int bucket = entrySlot(cacheEntries[i].key);
@@ -80,7 +92,7 @@ static void entryPut(int pack, const uint32_t *h) {
     e->next = cacheBuckets[slot];
     cacheBuckets[slot] = i;
     memcpy(e->key, h, 20);
-  }
+  } else if(e->pack<0)cacheDeadEntries--;
   e->pack = pack;
   e->offset = h[5];
   e->na = h[6];
@@ -155,8 +167,7 @@ static int packRoom(uint64_t incoming, int keep) {
     diskBytes -= p->bytes + p->indexBytes;
     p->bytes = p->indexBytes = 0;
     for (int i = 0; i < entryCount; i++)
-      if (cacheEntries[i].pack == old)
-        cacheEntries[i].pack = -1;
+      if (cacheEntries[i].pack == old)entryRetire(&cacheEntries[i]);
     diskEvicted++;
   }
   return 1;
@@ -167,6 +178,7 @@ static void cacheInit(void) {
     die("disk mutex");
   if (!cacheEnabled)
     return;
+  if(cacheInitProgress)cacheInitProgress();
   uint32_t endian = 1;
   float one = 1;
   uint32_t bits;
@@ -229,7 +241,8 @@ static void cacheInit(void) {
       packCount--;
       continue;
     }
-    uint32_t h[10];
+    uint32_t h[10];int scanned=0;
+    if(cacheInitProgress)cacheInitProgress();
     while (fread(h, sizeof(h), 1, idx) == 1) {
       if (h[9] != cacheHash(h, 36, 2166136261u) || h[0] != (uint32_t)k ||
           h[1] != (uint32_t)f || (uint64_t)h[5] + h[6] + h[7] > p->bytes) {
@@ -237,6 +250,7 @@ static void cacheInit(void) {
         break;
       }
       entryPut(id, h);
+      if(cacheInitProgress && !(++scanned & 4095))cacheInitProgress();
       p->indexBytes += sizeof(h);
     }
     fclose(idx);
@@ -265,7 +279,7 @@ static int cacheRead(int kind, int face, int level, int x, int y, void *a,
       *nb = e->nb;
     else {
       diskBad++;
-      e->pack = -1;
+      entryRetire(e);
     }
   }
   if (ok)

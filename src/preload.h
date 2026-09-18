@@ -2,6 +2,7 @@
 #include "ram-preload.h"
 /* Preload the real concentric cover; cache pages retain their existing format.
  */
+static const char *loadingStage;
 static void loadingScreen(int ready, int total, int plants, int plantTotal) {
   float progress = (ready + plants) / (float)(total + plantTotal + 1);
   if (ready == total && plants == plantTotal)
@@ -41,6 +42,7 @@ static void loadingScreen(int ready, int total, int plants, int plantTotal) {
   char text[160];
   snprintf(text, sizeof(text), "TERRAIN %d/%d | VEGETATION %d/%d", ready, total,
            plants, plantTotal);
+  if(loadingStage)snprintf(text,sizeof(text),"%s / %d PACKS / %d ENTRIES",loadingStage,packCount,entryCount);
   label(left, top + 35, text, 1.3f);
   SDL_LockMutex(diskMutex);
   unsigned long long hits = diskHits[1] + diskHits[2],
@@ -50,10 +52,24 @@ static void loadingScreen(int ready, int total, int plants, int plantTotal) {
            fresh);
   label(left, top + 62, text, 1);
   label(left, top + 84,
+        loadingStage ? "READING SAVED WORLD / ESC TO QUIT" :
         fresh ? "BUILDING NEW ASSETS / ENTER TO SKIP"
               : "LOADING CACHE INTO RAM AND GPU / ENTER TO SKIP",
         1);
   SDL_GL_SwapWindow(window);
+}
+/* cacheInit runs before workers/startup preloading; keep the window responsive
+ * while indexing an existing disk cache, including large/full indexes. */
+static void cacheLoadingProgress(void) {
+  static Uint32 last;Uint32 now=SDL_GetTicks();
+  if(last && now-last<100)return;
+  last=now;SDL_Event event;
+  while(SDL_PollEvent(&event)) {
+    if(event.type==SDL_QUIT || (event.type==SDL_KEYDOWN && event.key.keysym.sym==SDLK_ESCAPE)) {
+      SDL_Quit();exit(0);
+    }
+  }
+  loadingScreen(0,1,0,0);
 }
 static int preloadCount(int id, int *ready, int expand) {
   Node *n = &nodes[id];

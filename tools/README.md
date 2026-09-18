@@ -122,3 +122,11 @@ materials but does not create an OpenGL context. The raster test also checks
 exact cache-key invalidation for camera, projection, resolution and payloads.
 Use `--voxel-no-cache` to measure raster work without stationary reuse;
 `VOXEL_CACHE` reports rebuild/reuse counts and static mesh allocations.
+
+
+`check-cache-saturation.c` is a CPU check (compile like `check-voxel-terrain.c`).
+It uses an eight-entry index, fills it, attempts 10,000 further insertions and
+checks that saturation does not trigger repeated whole-table compactions.
+It also verifies existing-key updates, retirement, reclamation and revival.
+For startup regressions, run `./run.sh --voxel-terrain --frames 120` without
+`--still` or `--no-preload`: these previously masked the normal startup path.

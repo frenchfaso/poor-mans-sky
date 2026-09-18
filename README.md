@@ -82,6 +82,10 @@ and [Grégory Massal's terrain article](https://www.massal.net/article/voxel/).
 ./run.sh --voxel-terrain --voxel-scale 2
 ```
 
+The experimental mode streams immediately by default. Add `--preload` to wait
+for the full startup/RAM preload; `--no-preload` still explicitly skips it.
+Large disk caches show an interactive indexing screen before scene startup.
+
 The CPU reads caster-specific height/normal arrays and decoded colors, then
 produces base color, normals and depth; a GLSL 1.20 pass lights/composites it.
 The experimental path never prepares adaptive terrain mesh LODs, morphs,
