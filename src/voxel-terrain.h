@@ -110,7 +110,11 @@ typedef struct {
 static VoxelPage *voxelPages[SLOTS];
 static size_t voxelCPUBytes;
 static int voxelCompact=1,voxelWasActive;
+static unsigned long long voxelPayloadRevision;
+static int voxelRasterCache=1;
+static unsigned long long voxelRasterBuilds,voxelRasterReused;
 static void voxelInvalidateSlot(int slot) {
+  voxelPayloadRevision++;
   if(voxelPages[slot])voxelPages[slot]->id=-1;
 }
 static VoxelPage *voxelPage(const Node *n) {
@@ -183,18 +187,23 @@ static float voxelViewMix(V3 position,V3 forward,V3 right,V3 screenUp) {
  * Pixel-store bit order is explicit because both masks must agree exactly. */
 static void voxelStipple(int caster) {
   if(voxelMix<=0 || voxelMix>=1) {glDisable(GL_POLYGON_STIPPLE);return;}
-  GLubyte mask[128];memset(mask,0,sizeof(mask));
-  for(int y=0;y<32;y++)for(int x=0;x<32;x++) {
-    int rank=0;
-    for(int bit=0;bit<3;bit++) {
-      int a=(x>>bit)&1,b=(y>>bit)&1;
-      rank|=((a^b)*2+b)<<(4-2*bit);
+  static GLubyte masks[2][128];static int savedLevel=-1;
+  int level=(int)(voxelMix*64+.5f);
+  if(level!=savedLevel) {
+    memset(masks,0,sizeof(masks));
+    for(int y=0;y<32;y++)for(int x=0;x<32;x++) {
+      int rank=0;
+      for(int bit=0;bit<3;bit++) {
+        int a=(x>>bit)&1,b=(y>>bit)&1;
+        rank|=((a^b)*2+b)<<(4-2*bit);
+      }
+      int useCaster=rank<level;
+      masks[useCaster][y*4+x/8]|=(GLubyte)(128>>(x%8));
     }
-    int useCaster=(rank+.5f)<voxelMix*64;
-    if(useCaster==caster)mask[y*4+x/8]|=(GLubyte)(128>>(x%8));
+    savedLevel=level;
   }
   glPixelStorei(GL_UNPACK_LSB_FIRST,GL_FALSE);
-  glPolygonStipple(mask);glEnable(GL_POLYGON_STIPPLE);
+  glPolygonStipple(masks[caster]);glEnable(GL_POLYGON_STIPPLE);
 }
 static void voxelPrepareTerrain(void) {
   if(!voxelWasActive) {
@@ -221,25 +230,16 @@ static void voxelPrepareTerrain(void) {
   }
   /* Only water needs mesh LOD/topology now. No terrain triangle budgeting,
    * morphs, seam construction, texture fades, sorting or occlusion queries. */
+  static unsigned long long waterPayloadRevision=~0ull;
+  if(previousCount==selectedCount && waterPayloadRevision==voxelPayloadRevision &&
+     !memcmp(previousCover,selected,selectedCount*sizeof(int)))return;
+  waterPayloadRevision=voxelPayloadRevision;
   for(int i=0;i<previousCount;i++)previousIndex[previousCover[i]]=-1;
   previousCount=selectedCount;
   for(int i=0;i<selectedCount;i++) {
     Node *n=&nodes[selected[i]];
     n->meshLevel=(n->size>4000 && n->minHeight<0 && n->maxHeight>0)?1:3;
     previousCover[i]=selected[i];previousIndex[selected[i]]=i;previousLevels[i]=n->meshLevel;
-  }
-}
-static void voxelPrepareMeshFallback(void) {
-  if(voxelWasActive) {
-    morphInitialized=0;previousCount=0;terrainSeamCount=-1;voxelWasActive=0;
-    terrainGeometryRevision++;
-  }
-  for(int i=0;i<selectedCount;i++) {
-    Node *n=&nodes[selected[i]];
-    voxelUploadAtlas(n);
-    if(n->vboBytes!=NV*sizeof(Vertex)) {
-      voxelSetVBO(n,n->vertices,NV*sizeof(Vertex));voxelFallbackUploads++;
-    }
   }
 }
 static void voxelResize(void) {
@@ -263,12 +263,26 @@ static void voxelResize(void) {
   }
   voxelWidth=w;voxelHeight=h;checkGL("voxel targets");
 }
-static void voxelRaster(int bounded) {
-  memset(voxelCover,0,sizeof(voxelCover));
-  float maximum=0;
+static float voxelCoverMaximum(void) {
+  static int ids[1024],count=-1;static unsigned long long revision;
+  static float maximum;
+  if(count==selectedCount && revision==voxelPayloadRevision &&
+     !memcmp(ids,selected,selectedCount*sizeof(int)))return maximum;
+  memset(voxelCover,0,sizeof(voxelCover));maximum=0;
   for(int i=0;i<selectedCount;i++) {
     voxelCover[selected[i]]=1;maximum=fmaxf(maximum,nodes[selected[i]].maxHeight);
   }
+  memcpy(ids,selected,selectedCount*sizeof(int));count=selectedCount;revision=voxelPayloadRevision;
+  return maximum;
+}
+/* GCC fast-math may reassociate the distance/depth recurrence differently
+ * in the bounded and reference loops on i686. Keep this kernel ordered so
+ * hierarchy skips and cached payloads retain bit-exact depth validation. */
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("no-unsafe-math-optimizations")))
+#endif
+static void voxelRaster(int bounded) {
+  float maximum=voxelCoverMaximum();
   float outerRadius=RADIUS+maximum+2;
   memset(voxelBlocks,0,sizeof(voxelBlocks));
   V3 up=norm(cameraEye);float radius=sqrtf(dot(cameraEye,cameraEye));
@@ -341,22 +355,52 @@ static void voxelRaster(int bounded) {
   SDL_UnlockMutex(mutex);
 }
 #include "voxel-hiz.h"
+/* Exact key: never reproject/reuse depth after even a small camera change.
+ * Lighting, shadows, water and actors still render every frame on the GPU. */
+typedef struct {
+  V3 eye,forward,right,up;
+  float nearPlane,farPlane;
+  int w,h,screenW,screenH,count;
+  unsigned long long revision;
+} VoxelRasterKey;
+static int voxelRasterDirty(void) {
+  static VoxelRasterKey saved;static int valid,ids[1024];
+  VoxelRasterKey key;memset(&key,0,sizeof(key));
+  key.eye=cameraEye;key.forward=viewForward;key.right=viewRight;key.up=viewUp;
+  key.nearPlane=clipNear;key.farPlane=clipFar;key.w=voxelWidth;key.h=voxelHeight;
+  key.screenW=width;key.screenH=height;key.count=selectedCount;key.revision=voxelPayloadRevision;
+  int dirty=!valid || memcmp(&key,&saved,sizeof(key)) || memcmp(ids,selected,selectedCount*sizeof(int));
+  saved=key;memcpy(ids,selected,selectedCount*sizeof(int));valid=1;
+  return dirty || !voxelRasterCache;
+}
 static void voxelDraw(void) {
   voxelResize();Uint64 start=SDL_GetPerformanceCounter();
   V3 up=norm(cameraEye);float radius=sqrtf(dot(cameraEye,cameraEye));
-  voxelRaster(1);
+  int dirty=voxelRasterDirty();
+  if(dirty) {voxelRaster(1);voxelRasterBuilds++;}else voxelRasterReused++;
   if(voxelCheck && frameNo%120==119) {
     size_t bytes=(size_t)voxelWidth*voxelHeight*4;
     unsigned char *saved=malloc(bytes*3);if(!saved)die("voxel validation allocation");
     for(int k=0;k<3;k++)memcpy(saved+bytes*k,voxelBuffers[k],bytes);
     voxelCompact=0;voxelRaster(0);voxelCompact=1;
-    for(int k=0;k<3;k++)if(memcmp(saved+bytes*k,voxelBuffers[k],bytes))
+    for(int k=0;k<3;k++)if(memcmp(saved+bytes*k,voxelBuffers[k],bytes)) {
+      size_t different=0,first=bytes;int maxDelta=0;
+      for(size_t j=0;j<bytes;j++)if(saved[bytes*k+j]!=voxelBuffers[k][j]) {
+        if(first==bytes)first=j;
+        different++;
+        int delta=abs((int)saved[bytes*k+j]-voxelBuffers[k][j]);if(delta>maxDelta)maxDelta=delta;
+      }
+      fprintf(stderr,"VOXEL_MISMATCH buffer=%d first=%zu count=%zu max_byte_delta=%d cached=%u reference=%u dirty=%d revision=%llu\n",k,first,different,maxDelta,saved[bytes*k+first],voxelBuffers[k][first],dirty,voxelPayloadRevision);
       die("voxel enclosing-sphere culling changed framebuffer");
+    }
     free(saved);printf("VOXEL_CHECK frame=%d compact+bounded/raw+unbounded identical\n",frameNo);
   }
-  if(voxelMix>=1)voxelHiZBuild();else voxelHiZFrame=-1;
+  if(voxelMix>=1) {
+    if(!dirty && voxelHiZ && voxelHiZFrame==frameNo-1)voxelHiZFrame=frameNo;
+    else voxelHiZBuild();
+  }else voxelHiZFrame=-1;
   Uint64 filled=SDL_GetPerformanceCounter();
-  for(int k=0;k<3;k++) {
+  if(dirty)for(int k=0;k<3;k++) {
     glActiveTexture(GL_TEXTURE0+k);glBindTexture(GL_TEXTURE_2D,voxelTextures[k]);
     glTexSubImage2D(GL_TEXTURE_2D,0,0,0,voxelHeight,voxelWidth,GL_RGBA,GL_UNSIGNED_BYTE,voxelBuffers[k]);
   }

@@ -86,7 +86,8 @@ static void voxelHiZAudit(V3 center,V3 half) {
   glEnd();glEndQuery(GL_SAMPLES_PASSED);
   GLuint samples;glGetQueryObjectuiv(voxelHiZQuery,GL_QUERY_RESULT,&samples);
   glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);glDepthMask(GL_TRUE);glUseProgram(saved);
-  if(samples)die("voxel Hi-Z rejected GPU-visible bounding box");voxelHiZVerified++;
+  if(samples)die("voxel Hi-Z rejected GPU-visible bounding box");
+  voxelHiZVerified++;
 }
 static int voxelHiddenBox(V3 center,V3 half) {
   if(!voxelScene || voxelMix<1 || !voxelHiZ || voxelHiZFrame!=frameNo || overdrawView || wire)return 0;

@@ -12,20 +12,20 @@ static int pipelinePoll(SDL_Event *event) {
   if(liveCheck) {
     if(frameNo==60)eye=mul(norm(eye),RADIUS+3000);
     if(frameNo==100) {
-      if(voxelWasActive)die("altitude did not select mesh fallback");
+      if(voxelScene)die("altitude did not select static fallback");
       eye=mul(norm(eye),RADIUS+1750);
     }
     if(frameNo==140) {
-      if(!voxelScene || voxelMix<=0 || voxelMix>=1 || voxelWasActive)
+      if(!voxelScene || voxelMix<=0 || voxelMix>=1)
         die("altitude band did not render both paths");
       eye=mul(norm(eye),RADIUS+1000);
     }
     if(frameNo==180) {
-      if(!voxelWasActive)die("descent did not restore caster");
+      if(!voxelScene || voxelMix<1)die("descent did not restore caster");
       pitch=-1.56f;
     }
     if(frameNo==220) {
-      if(voxelWasActive)die("vertical view did not select mesh fallback");
+      if(voxelScene)die("vertical view did not select static fallback");
       pitch=-.24f;
     }
   }
@@ -37,8 +37,9 @@ int main(int argc,char **argv) {
     liveCheck=1;
     char *args[]={argv[0],"--windowed","--voxel-terrain","--frames","260","--still","--no-preload","--no-vsync"};
     CHECK(!poor_mans_sky_application_main(sizeof(args)/sizeof(args[0]),args));
-    CHECK(voxelFallbackUploads>0 && voxelProxyUploads>0 && voxelWasActive);
-    for(int i=0;i<countNode;i++)CHECK(nodes[i].vboBytes<=VOXEL_PROXY_VERTS*sizeof(Vertex));
+    CHECK(staticPlanetBuilds==1 && voxelFallbackUploads==0 && voxelProxyUploads==0);
+    CHECK(morphStarted==0 && textureTransitions==0 && batchBytes==0);
+    for(int i=0;i<countNode;i++)CHECK(nodes[i].vboBytes==0);
     puts("voxel live pipeline: actual renderer entered mesh fallback and returned to caster OK");return 0;
   }
   CHECK(!SDL_Init(SDL_INIT_VIDEO));
@@ -59,14 +60,18 @@ int main(int argc,char **argv) {
     glGetBufferSubData(GL_ARRAY_BUFFER,0,sizeof(actual),actual);CHECK(!memcmp(actual,expected,sizeof(actual)));
     GLuint saved=n->vbo;int uploads=voxelProxyUploads;voxelProxyDraw(n);
     CHECK(n->vbo==saved && voxelProxyUploads==uploads); /* immutable proxy reused */
-    voxelPrepareMeshFallback();CHECK(n->vboBytes==NV*sizeof(Vertex));CHECK(terrainGPUBytes==n->vboBytes);
+    voxelSetVBO(n,n->vertices,NV*sizeof(Vertex));voxelWasActive=0;CHECK(n->vboBytes==NV*sizeof(Vertex));CHECK(terrainGPUBytes==n->vboBytes);
     GLint bytes;glGetBufferParameteriv(GL_ARRAY_BUFFER,GL_BUFFER_SIZE,&bytes);CHECK(bytes==NV*sizeof(Vertex));
     Vertex all[NV];glGetBufferSubData(GL_ARRAY_BUFFER,0,sizeof(all),all);CHECK(!memcmp(all,n->vertices,sizeof(all)));
     n->stitched=calloc(NV,sizeof(Vertex));morphActive=1;lodMorphs[0].id=0;
     voxelPrepareTerrain();CHECK(n->vbo==0 && n->vboBytes==0 && terrainGPUBytes==0);
     CHECK(!n->stitched && !morphActive && lodMorphs[0].id==-1 && previousIndex[0]==0);
   }
-  CHECK(glGetError()==GL_NO_ERROR);CHECK(voxelFallbackUploads==3 && voxelProxyUploads==3);
+  CHECK(glGetError()==GL_NO_ERROR);CHECK(voxelFallbackUploads==0 && voxelProxyUploads==3);
+  resourceInit();materialInit();staticPlanetInit();
+  GLuint fixed=staticPlanetVBO;size_t fixedBytes=terrainGPUBytes;staticPlanetInit();
+  CHECK(staticPlanetBuilds==1 && staticPlanetVBO==fixed && terrainGPUBytes==fixedBytes);
+  voxelWasActive=0;voxelPrepareTerrain();CHECK(staticPlanetVBO==fixed && terrainGPUBytes==fixedBytes);
   /* Verify stipple with GLSL and explicit depth writes, as in the caster.
    * Every pixel must belong to exactly one path with that path's depth. */
   const char *vs="#version 120\nvoid main(){gl_Position=gl_Vertex;gl_FrontColor=gl_Color;}";
@@ -109,7 +114,7 @@ int main(int argc,char **argv) {
   frameNo++;CHECK(!voxelHiddenBox(v3(0,0,-20),v3(1,1,1)));
   CHECK(!voxelHiZRect(-1,0,20,20,100));
   voxelHiZFree();free(voxelBuffers[2]);glDeleteQueries(1,&voxelHiZQuery);
-  free(n->vertices);free(n->pixels);glDeleteBuffers(1,&voxelProxyEBO);
+  staticPlanetClose();CHECK(terrainGPUBytes==0);free(n->vertices);free(n->pixels);glDeleteBuffers(1,&voxelProxyEBO);
   SDL_DestroyMutex(mutex);SDL_GL_DeleteContext(context);SDL_DestroyWindow(window);SDL_Quit();
   puts("voxel pipeline: proxy reuse, VBO contents/accounting, mesh fallback, caster re-entry, stipple color/depth and conservative Hi-Z/GPU audit OK");return 0;
 }

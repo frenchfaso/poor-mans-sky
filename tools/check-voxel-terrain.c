@@ -36,6 +36,16 @@ int main(void) {
     float mix=voxelViewMix(v3(0,RADIUS+altitude,0),forward,right,up);
     CHECK(mix>=0 && mix<=last);last=mix;
   }
+  /* Exact raster key: changes in camera, clip, size, cover or payload must
+   * invalidate; unchanged frames can reuse both CPU payload and GPU upload. */
+  CHECK(voxelRasterDirty());CHECK(!voxelRasterDirty());
+  cameraEye.x+=.01f;CHECK(voxelRasterDirty());CHECK(!voxelRasterDirty());
+  viewForward.z+=.001f;CHECK(voxelRasterDirty());
+  clipNear+=1;CHECK(voxelRasterDirty());width++;CHECK(voxelRasterDirty());
+  voxelWidth++;CHECK(voxelRasterDirty());voxelPayloadRevision++;CHECK(voxelRasterDirty());
+  selectedCount=1;selected[0]=0;CHECK(voxelRasterDirty());CHECK(!voxelRasterDirty());
+  selected[0]=1;CHECK(voxelRasterDirty());selectedCount=0;CHECK(voxelRasterDirty());
+  voxelRasterCache=0;CHECK(voxelRasterDirty());CHECK(voxelRasterDirty());voxelRasterCache=1;
   static Vertex vertices[NV];static unsigned char pixels[PAGE_BYTES];
   int next=6;
   for(int face=0;face<6;face++) {

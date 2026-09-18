@@ -1202,6 +1202,7 @@ static void drawSky(void) {
   glDepthMask(GL_TRUE);
 }
 #include "voxel-proxy.h"
+#include "static-planet.h"
 #include "reflection.h"
 #include "sun-shadow.h"
 #include "moon-render.h"
@@ -1265,7 +1266,7 @@ static void drawScene(void) {
     }
   }
   float fogHeight = exp2f(-fmaxf(sqrtf(dot(cameraEye,cameraEye))-RADIUS, 0) / 13000.0f);
-  if(voxelMesh)
+  if(voxelMesh && !voxelTerrain)
   for (int mode = performanceMode; mode < 2; mode++)
   for (int approximation = 0; approximation < 2; approximation++) {
     for (int transition = 0; transition < 2; transition++) {
@@ -1287,9 +1288,8 @@ static void drawScene(void) {
   }
   if (wire)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-  if(!voxelMesh) voxelPrepareTerrain();
+  if(voxelTerrain) voxelPrepareTerrain();
   else {
-    if(voxelTerrain)voxelPrepareMeshFallback();
     prepareMeshLODs();
     qsort(selected, selectedCount, sizeof(*selected), nearFirst);
     prepareTextureFades();
@@ -1301,7 +1301,7 @@ static void drawScene(void) {
     n->visible = nodeVisible(n);
     visibleCount += n->visible;
   }
-  if(!voxelScene)occlusionPrepare();
+  if(!voxelTerrain)occlusionPrepare();
   gpuCheckpoint("reflection");updateReflection();
   gpuCheckpoint("sun-shadow");sunShadowUpdate();
   gpuCheckpoint("opaque-terrain");
@@ -1313,16 +1313,17 @@ static void drawScene(void) {
     glActiveTexture(GL_TEXTURE0);
   }
   voxelStipple(0);
-  if (voxelMesh && batchingEnabled)
+  if (voxelMesh && voxelTerrain)staticPlanetDraw(0,norm(cameraEye));
+  if (voxelMesh && !voxelTerrain && batchingEnabled)
     drawTerrainBatches();
   else {
     memset(batchedNodes, 0, sizeof(batchedNodes));
     batchDraws = batchPatches = 0;
   }
   int boundAtlas = -1;
-  for (int i = 0; i < selectedCount; i++) {
+  for (int i = 0; !voxelTerrain && voxelMesh && i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
-    if (!voxelMesh || !n->visible || n->maxHeight < 0 || batchedNodes[i])
+    if (!n->visible || n->maxHeight < 0 || batchedNodes[i])
       continue;
     drawn++;
     float plane[4];
@@ -1376,7 +1377,7 @@ static void drawScene(void) {
   if(voxelScene) {
     voxelStipple(1);voxelShadowGround();glDisable(GL_POLYGON_STIPPLE);
   }
-  else occlusionIssue();
+  else if(!voxelTerrain)occlusionIssue();
   profileMark(0);
   glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   prepareWaterSeams();
@@ -1605,6 +1606,8 @@ int main(int argc, char **argv) {
       voxelHiZCheck=voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-check"))
       voxelCheck=voxelTerrain=1;
+    else if (!strcmp(argv[i], "--voxel-no-cache"))
+      voxelRasterCache=0;
     else if (!strcmp(argv[i], "--voxel-terrain"))
       voxelTerrain=1;
     else if (!strcmp(argv[i], "--voxel-scale") && i+1<argc) {
@@ -1664,7 +1667,7 @@ int main(int argc, char **argv) {
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-terrain] [--preload|--no-preload] "
-           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check] [--voxel-no-hiz] [--voxel-hiz-check]");
+           "[--terrain-detail 1] [--texture-detail 1] [--voxel-terrain] [--voxel-scale 1|2] [--voxel-check] [--voxel-no-cache] [--voxel-no-hiz] [--voxel-hiz-check]");
       return 0;
     } else
       die("unknown argument");
@@ -2237,6 +2240,7 @@ int main(int argc, char **argv) {
            profileTimes[3] / profileSamples, profileTimes[4] / profileSamples,
            profileTimes[5] / profileSamples);
   }
+  printf("VOXEL_CACHE raster_builds=%llu raster_reused=%llu static_builds=%d static_bytes=%zu\n",voxelRasterBuilds,voxelRasterReused,staticPlanetBuilds,staticPlanetBytes);
   printf("VOXEL_HIZ enabled=%d tested=%llu culled=%llu gpu_verified=%llu builds=%d quiet_frames=%d build_total_ms=%.3f bytes=%zu\n",voxelTerrain&&voxelHiZ,voxelHiZTests,voxelHiZCulled,voxelHiZVerified,voxelHiZBuilds,voxelHiZQuietFrames,voxelHiZBuildMS,voxelHiZBytes);
   int fullVBOs=0,proxyVBOs=0;
   for(int i=0;i<countNode;i++) {
@@ -2249,7 +2253,7 @@ int main(int argc, char **argv) {
     free(nodes[i].vertices);
     free(nodes[i].stitched);
   }
-  sunShadowClose();moonClose();cloudsClose();glDeleteBuffers(1,&waterSeamVBO);
+  staticPlanetClose();sunShadowClose();moonClose();cloudsClose();glDeleteBuffers(1,&waterSeamVBO);
   natureClose();
   free(geology);
   cacheClose();

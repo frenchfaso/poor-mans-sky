@@ -98,8 +98,8 @@ It checks skipping against the same column caster, not against the mesh renderer
 
 
 `check-voxel-pipeline.c` requires OpenGL. Compile like the other GL checks.
-It verifies proxy VBO contents/reuse, memory accounting, full-mesh fallback,
-return to the caster, complementary GLSL stipple coverage/depth at 25/50/75%,
+It verifies proxy VBO contents/reuse, memory accounting, single-build static mesh reuse,
+return to the caster without patch VBOs/morphs, complementary GLSL stipple coverage/depth at 25/50/75%,
 and Hi-Z with a known occluder/sky hole plus GPU audit.
 Place the executable in `bin/` and run from there with `--live` to exercise
 an actual scene switching caster → high-altitude mesh → mixed band → caster →
@@ -113,3 +113,12 @@ audits each Hi-Z rejected box using GPU sample queries. Compare timing with
 `--voxel-terrain` and `--voxel-terrain --voxel-no-hiz`, never with audit enabled.
 Check `VOXEL_HIZ` counts: zero rejected boxes means no culling benefit in that
 pose, even if the run passes. Reflections and shadow casters are excluded.
+
+
+`check-static-planet.c` is a CPU test (build like `check-voxel-terrain.c` in
+`bin/`). It checks all triangle indices, outward winding, two triangles per
+undirected edge, shared cube borders and Euler characteristic 2. It loads source
+materials but does not create an OpenGL context. The raster test also checks
+exact cache-key invalidation for camera, projection, resolution and payloads.
+Use `--voxel-no-cache` to measure raster work without stationary reuse;
+`VOXEL_CACHE` reports rebuild/reuse counts and static mesh allocations.

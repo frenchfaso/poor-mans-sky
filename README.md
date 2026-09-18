@@ -84,25 +84,36 @@ and [Grégory Massal's terrain article](https://www.massal.net/article/voxel/).
 
 The CPU reads caster-specific height/normal arrays and decoded colors, then
 produces base color, normals and depth; a GLSL 1.20 pass lights/composites it.
-The caster path skips terrain mesh LOD budgeting, sorting, morphs, stitching,
-texture fades, batching and terrain occlusion queries. Full terrain VBOs are
-not uploaded. Original disk payloads remain compatible and provide the inputs
-for the compact CPU cache, water and the optional mesh fallback.
+The experimental path never prepares adaptive terrain mesh LODs, morphs,
+stitching, texture fades, sorting, batches or terrain occlusion queries, even
+when the caster is unavailable. The streamed heightfield cover and water grids
+remain separate; their quadtree is still needed for data selection.
 
-Vegetation, actors, water, clouds, sky and the Moon remain enabled. Reflections
-use static 16-vertex/18-triangle terrain proxies, allocated/uploaded only when
-needed. Sun shadows use the existing caster map and a screen-space receiver
-reconstructed from voxel depth, avoiding the mismatched mesh receiver.
-High-altitude/steep/rolled views prepare the normal mesh LOD path. Between
-1,500 and 2,000 metres above the reference sphere, complementary pixel masks
-progressively replace the caster with meshes (also between 55° and 58° looking
-down). Returning reverses the same smoothstep fade; no extra render targets are
-needed. Both paths run throughout the transition band, including when stationary.
-The dither pattern can be visible; rapid camera jumps can still switch
-abruptly to keep invalid caster views off screen. These are conservative
-experimental thresholds, not Acer-tuned performance settings. Returning fully
-to the caster releases full terrain VBOs, stitches and morphs again. Lunar terrain
-continues to use its own renderer.
+The fallback is one static, welded cube sphere: 32 cells per face edge,
+6,146 shared vertices, 12,288 triangles, 196,648 GPU bytes. It is generated and
+uploaded once per world, with vertex colors from the existing material/climate
+fields. There are no terrain patch VBOs in this path. Reflections reuse this
+same mesh. Shadows retain existing casters, with a depth-based receiver for
+the caster and a static-mesh receiver for the fallback. Vegetation, actors,
+water, clouds, sky and the Moon remain enabled. The legacy renderer without
+`--voxel-terrain` remains available for comparison; lunar LOD is unchanged.
+
+Between 1,500 and 2,000 metres above the reference sphere, complementary pixel
+masks progressively replace the caster with the static mesh (also between 55°
+and 58° looking down). Returning reverses the same smoothstep fade. Both paths
+run in this band, even when stationary; the dither can be visible. Rapid camera
+jumps can switch abruptly to keep invalid caster views off screen. The mesh
+has kilometre-scale cells: nearby terrain, coastlines, vegetation placement and
+collision height can disagree with its coarse surface. These experimental
+thresholds/resolution are a performance tradeoff, not a close-up quality guarantee.
+
+An exact cache key reuses caster payloads and skips GPU uploads when camera,
+projection, resolution, selected cover and payload revision are unchanged.
+Lighting and other objects still update. Cover bounds, unchanged water topology,
+Hi-Z data and quantized transition masks also reuse cached results.
+`--voxel-no-cache` disables raster reuse for timing comparisons; do not present
+stationary cache-hit timings as moving-camera performance. `--voxel-check`
+compares cached payloads with fresh raw-page rasterization every 120 frames.
 
 The terrain depth also supplies a CPU Hi-Z hierarchy for occlusion of vegetation
 cells/groups in the main view. It preserves sky holes and the farthest depth,
@@ -119,7 +130,7 @@ skipping. `--voxel-scale 2` quarters terrain buffer pixels and upload bytes whil
 the rest of the scene keeps its normal resolution, trading terrain detail for speed.
 
 This remains experimental. Constant-depth spans and texture LOD transitions
-can still show artifacts, and coarse reflection proxies can lose small features.
+can still show artifacts, and the static mesh omits small terrain features.
 The three RGBA8 payloads add 3.52 MiB of VRAM at 640×480 (0.88 MiB at scale 2).
 The CPU page cache is bounded by residency slots (about 53 MiB maximum), allocated
 on demand. Hi-Z begins with 8×8 depth blocks and uses about 47 KiB at 960×600.

@@ -103,7 +103,12 @@ static void sunShadowGround(void) {
   u1(sunGroundP,"strength",.38f*clampf((dot(norm(cameraEye),sun)-.12f)/.18f,0,1));
   glEnable(GL_BLEND);glBlendFunc(GL_ZERO,GL_SRC_COLOR);glDepthMask(GL_FALSE);glDepthFunc(GL_LEQUAL);
   glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-1,-1);
-  for(int i=0;i<selectedCount;i++) {
+  if(voxelTerrain) {
+    u3(sunGroundP,"patchDelta",mul(sunAnchor,-1));
+    glPushMatrix();glTranslatef(-cameraEye.x,-cameraEye.y,-cameraEye.z);
+    staticPlanetGeometry();glPopMatrix();sunReceiverDraws=1;
+  }
+  for(int i=0;!voxelTerrain && i<selectedCount;i++) {
     Node *n=&nodes[selected[i]];if(!n->visible || n->maxHeight<0)continue;
     V3 delta=add(n->boundCenter,mul(sunAnchor,-1));
     V3 gap=v3(fmaxf(fabsf(delta.x)-n->boundHalf.x,0),fmaxf(fabsf(delta.y)-n->boundHalf.y,0),fmaxf(fabsf(delta.z)-n->boundHalf.z,0));

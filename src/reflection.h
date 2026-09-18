@@ -64,6 +64,7 @@ static void updateReflection(void) {
   glEnableClientState(GL_NORMAL_ARRAY);
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   GLuint p = reflectionLandP;
+  if(!voxelTerrain) {
   glUseProgram(p);
   u1(p, "fogHeightFactor", 0);
   u3(p, "sun", sun);
@@ -73,8 +74,10 @@ static void updateReflection(void) {
   u3(p, "sunLight", sunLight);
   u1(p, "exposure", sceneExposure);
   tex(p, "atlas", 0, atlasTex[0]);
+  }
   reflectionDraws = 0;
-  for (int i = 0; i < selectedCount; i++) {
+  if(voxelTerrain) {staticPlanetDraw(1,radial);reflectionDraws=1;}
+  for (int i = 0; !voxelTerrain && i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
     if (n->maxHeight < 0 || !boxInFrustum(n->boundCenter, n->boundHalf))
       continue;

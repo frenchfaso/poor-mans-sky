@@ -5,7 +5,8 @@
 static Vertex waterGrids[SLOTS][WATER_NV];
 static GLuint waterSeamVBO;
 typedef struct { int id, slot, lod, wet; } WaterState;
-static WaterState waterState[1024];
+static WaterState waterState[1024],waterInputState[1024];
+static int waterInputCount=-1;
 static uint64_t waterRevision;
 static int waterStateCount = -1, waterPrepared, waterReused;
 static int waterIdFirst(const void *a,const void *b) {
@@ -18,6 +19,15 @@ static void prepareWaterSeams(void) {
  waterPrepared=waterReused=0;
  int visible=0;for(int i=0;i<selectedCount;i++)if(nodes[selected[i]].visible && nodes[selected[i]].minHeight<0){visible=1;break;}
  if(!visible)return;
+ WaterState input[1024];
+ for(int i=0;i<selectedCount;i++) {
+  Node *n=&nodes[selected[i]];input[i]=(WaterState){selected[i],n->slot,n->meshLevel,n->minHeight<0};
+ }
+ if(waterInputCount==selectedCount && waterStateCount==selectedCount &&
+    waterRevision==terrainGeometryRevision && !memcmp(input,waterInputState,selectedCount*sizeof(*input))) {
+  waterReused=1;return;
+ }
+ memcpy(waterInputState,input,selectedCount*sizeof(*input));waterInputCount=selectedCount;
  int order[1024];memcpy(order,selected,selectedCount*sizeof(int));
  /* Compare exact identities rather than a hash: slot reuse and LOD changes
   * must invalidate even if the camera still sees the same region. */
