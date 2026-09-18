@@ -1,7 +1,64 @@
 // SPDX-License-Identifier: MPL-2.0
 /* CPU process time includes workers, excludes sleeping/driver waits. GPU elapsed
  * queries are polled asynchronously, never glFinish. RSS is current process
- * memory; GPU memory is the engine allocation estimate, not driver telemetry. */
+ * memory. Radeon VRAM is global driver accounting; other drivers use the engine
+ * allocation estimate. No GPU synchronization or framebuffer readback. */
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/ioctl.h>
+/* Stable Linux Radeon DRM UAPI, without a libdrm build dependency:
+ * include/uapi/drm/radeon_drm.h (GEM_INFO, INFO / VRAM_USAGE).
+ * VRAM_USAGE reads TTM accounting, not hardware registers or a GPU query. */
+typedef struct { uint32_t request,pad; uint64_t value; } PerfRadeonInfo;
+typedef struct { uint64_t gartSize,vramSize,vramVisible; } PerfRadeonGemInfo;
+static int perfRadeonFD=-1;
+#endif
+static int perfVRAMActual;
+static float perfVRAMMiB,perfVRAMCapacity=56;
+static double perfVRAMNext;
+static void perfMemoryClose(void) {
+#ifdef __linux__
+  if(perfRadeonFD>=0)close(perfRadeonFD);
+  perfRadeonFD=-1;
+#endif
+  perfVRAMActual=0;perfVRAMCapacity=56;
+}
+static int perfMemoryRead(void) {
+#ifdef __linux__
+  uint64_t bytes=0;
+  PerfRadeonInfo info={0x1e,0,(uint64_t)(uintptr_t)&bytes};
+  if(perfRadeonFD>=0 && !ioctl(perfRadeonFD,_IOWR('d',0x67,PerfRadeonInfo),&info)) {
+    perfVRAMMiB=bytes/1048576.f;return 1;
+  }
+#endif
+  return 0;
+}
+static void perfMemoryInit(void) {
+#ifdef __linux__
+  const char *vendor=(const char*)glGetString(GL_VENDOR);
+  /* Only the target R300 driver, with one render node: do not attribute an
+   * unrelated GPU's allocations to this context on multi-GPU machines. */
+  if(!vendor || strcmp(vendor,"X.Org R300 Project"))return;
+  int node=-1;char path[128],driver[256];struct stat st;
+  for(int i=128;i<192;i++) {
+    snprintf(path,sizeof(path),"/sys/class/drm/renderD%d",i);
+    if(!stat(path,&st)){if(node>=0)return;node=i;}
+  }
+  if(node<0)return;
+  snprintf(path,sizeof(path),"/sys/class/drm/renderD%d/device/driver",node);
+  ssize_t length=readlink(path,driver,sizeof(driver)-1);
+  if(length<0)return;
+  driver[length]=0;const char *name=strrchr(driver,'/');
+  if(!name || strcmp(name+1,"radeon"))return;
+  snprintf(path,sizeof(path),"/dev/dri/renderD%d",node);
+  perfRadeonFD=open(path,O_RDONLY|O_CLOEXEC);
+  PerfRadeonGemInfo info={0};
+  if(perfRadeonFD<0 || ioctl(perfRadeonFD,_IOWR('d',0x5c,PerfRadeonGemInfo),&info) || !info.vramSize || !perfMemoryRead()) {
+    perfMemoryClose();return;
+  }
+  perfVRAMActual=1;perfVRAMCapacity=info.vramSize/1048576.f;perfVRAMNext=.5;
+#endif
+}
 #define PERF_HISTORY 200
 #define PERF_QUERIES 8
 #ifndef GL_TIME_ELAPSED
@@ -40,7 +97,8 @@ static void perfInit(void) {
     if(bits)glGenQueries(PERF_QUERIES,perfQueries);else perfResult64=NULL;
   }
   perfLastCPU=perfCPUClock();
-  printf("PERF_OVERLAY gpu_timer=%s cpu=process_time ram=current_rss gpu_memory=allocation_estimate\n",perfResult64?"asynchronous":"unavailable");
+  perfMemoryInit();
+  printf("PERF_OVERLAY gpu_timer=%s cpu=process_time ram=current_rss gpu_memory=%s capacity_mib=%.0f\n",perfResult64?"asynchronous":"unavailable",perfVRAMActual?"radeon_global_vram_2hz":"allocation_estimate",perfVRAMCapacity);
 }
 static void perfBegin(void) {
   if(!perfResult64)return;
@@ -63,7 +121,16 @@ static void perfFrame(double wallMS) {
   double now=perfCPUClock();perfCPUTime+=fmax(0,now-perfLastCPU);perfLastCPU=now;
   perfWall+=wallMS;perfElapsed+=wallMS*.001;perfFrames++;
   if(perfWall<100)return;
-  perfHistory[perfHead]=(PerfPoint){perfCPUTime/perfFrames,perfGPUFrames?perfGPUTime/perfGPUFrames:-1,perfResidentMiB(),vramEstimate()/1048576.f,perfElapsed};
+  if(perfVRAMActual && perfElapsed>=perfVRAMNext) {
+    perfVRAMNext=perfElapsed+.5;
+    if(!perfMemoryRead()) {
+      perfMemoryClose();
+      /* Do not connect global allocations to the process estimate in a graph. */
+      for(int i=0;i<PERF_HISTORY;i++)perfHistory[i].vram=-1;
+    }
+  }
+  float vram=perfVRAMActual?perfVRAMMiB:vramEstimate()/1048576.f;
+  perfHistory[perfHead]=(PerfPoint){perfCPUTime/perfFrames,perfGPUFrames?perfGPUTime/perfGPUFrames:-1,perfResidentMiB(),vram,perfElapsed};
   float instant=1000*perfFrames/perfWall,weight=1-expf(-perfWall/500);
   perfFPS=perfFPS>0?perfFPS+(instant-perfFPS)*weight:instant;
   perfHead=(perfHead+1)%PERF_HISTORY;if(perfCount<PERF_HISTORY)perfCount++;
@@ -93,9 +160,9 @@ static void overlay(void) {
   glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,width,height,0,-1,1);
   glMatrixMode(GL_MODELVIEW);glLoadIdentity();
   glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
-  glColor4f(.01f,.018f,.03f,.88f);perfRect(16,16,424,256);
+  glColor4f(.01f,.018f,.03f,.88f);perfRect(16,16,212,128);
   glColor4f(.91f,.96f,1,1);char text[100];
-  snprintf(text,sizeof(text),"%.0F FPS",perfFPS);label(28,28,text,4);
+  snprintf(text,sizeof(text),"%.0F FPS",perfFPS);label(24,24,text,2.5f);
   PerfPoint latest=perfCount?perfHistory[(perfHead+PERF_HISTORY-1)%PERF_HISTORY]:(PerfPoint){0,-1,-1,0,0};
   float computeMax=10,ramMax=64;
   for(int i=0;i<perfCount;i++) {
@@ -103,18 +170,18 @@ static void overlay(void) {
     computeMax=fmaxf(computeMax,fmaxf(perfHistory[i].cpu,perfHistory[i].gpu));ramMax=fmaxf(ramMax,perfHistory[i].ram);
   }
   computeMax=ceilf(computeMax/10)*10;ramMax=ceilf(ramMax/64)*64;
-  glColor4f(.3f,.85f,1,1);snprintf(text,sizeof(text),"CPU %.1F MS",latest.cpu);label(28,73,text,1.3f);
-  glColor4f(1,.68f,.27f,1);if(latest.gpu<0)snprintf(text,sizeof(text),"GPU N/A");else snprintf(text,sizeof(text),"GPU %.1F MS",latest.gpu);label(240,73,text,1.3f);
-  glColor4f(.16f,.23f,.29f,1);perfRect(28,96,400,58);
-  glColor4f(.3f,.85f,1,1);perfGraph(28,96,400,58,0,computeMax);
-  glColor4f(1,.68f,.27f,1);perfGraph(28,96,400,58,1,computeMax);
-  glColor4f(.65f,.73f,.8f,1);snprintf(text,sizeof(text),"0-%.0F MS / FRAME   HISTORY 20 S",computeMax);label(28,160,text,1);
-  glColor4f(.3f,.85f,1,1);if(latest.ram<0)snprintf(text,sizeof(text),"RAM N/A");else snprintf(text,sizeof(text),"RAM %.0F MIB",latest.ram);label(28,185,text,1.2f);
-  glColor4f(1,.68f,.27f,1);snprintf(text,sizeof(text),"GPU EST %.1F MIB",latest.vram);label(240,185,text,1.2f);
-  glColor4f(.16f,.23f,.29f,1);perfRect(28,205,188,38);perfRect(240,205,188,38);
-  glColor4f(.3f,.85f,1,1);perfGraph(28,205,188,38,2,ramMax);
-  glColor4f(1,.68f,.27f,1);perfGraph(240,205,188,38,3,56);
-  glColor4f(.65f,.73f,.8f,1);snprintf(text,sizeof(text),"RSS / %.0F MIB",ramMax);label(28,250,text,1);label(240,250,"BUDGET 56 MIB",1);
+  glColor4f(.3f,.85f,1,1);snprintf(text,sizeof(text),"CPU %.1F MS",latest.cpu);label(24,50,text,1);
+  glColor4f(1,.68f,.27f,1);if(latest.gpu<0)snprintf(text,sizeof(text),"GPU N/A");else snprintf(text,sizeof(text),"GPU %.1F MS",latest.gpu);label(126,50,text,1);
+  glColor4f(.16f,.23f,.29f,1);perfRect(24,62,196,23);
+  glColor4f(.3f,.85f,1,1);perfGraph(24,62,196,23,0,computeMax);
+  glColor4f(1,.68f,.27f,1);perfGraph(24,62,196,23,1,computeMax);
+  glColor4f(.65f,.73f,.8f,1);snprintf(text,sizeof(text),"0-%.0F MS / FRAME   20 S",computeMax);label(24,90,text,1);
+  glColor4f(.3f,.85f,1,1);if(latest.ram<0)snprintf(text,sizeof(text),"RAM N/A");else snprintf(text,sizeof(text),"RAM %.0F MIB",latest.ram);label(24,105,text,1);
+  glColor4f(1,.68f,.27f,1);snprintf(text,sizeof(text),"%s %.1F MIB",perfVRAMActual?"VRAM":"EST",latest.vram);label(126,105,text,1);
+  glColor4f(.16f,.23f,.29f,1);perfRect(24,118,94,18);perfRect(126,118,94,18);
+  glColor4f(.3f,.85f,1,1);perfGraph(24,118,94,18,2,ramMax);
+  glColor4f(1,.68f,.27f,1);perfGraph(126,118,94,18,3,perfVRAMCapacity);
+
   glDisable(GL_BLEND);
 }
-static void perfClose(void) {if(perfResult64)glDeleteQueries(PERF_QUERIES,perfQueries);}
+static void perfClose(void) {if(perfResult64)glDeleteQueries(PERF_QUERIES,perfQueries);perfMemoryClose();}

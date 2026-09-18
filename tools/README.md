@@ -150,7 +150,8 @@ GPU depth testing remains active. `HYBRID` reports persistent builds/reuse,
 evictions, geometry and bytes. `TERRAIN_SURFACE` must report zero main static draws
 when mix is 1. Benchmark complete streamed scenes, not the first few frames.
 
-`check-voxel-hybrid.c` (OpenGL) checks analytic plane coverage/depth, draw-order
+`check-voxel-hybrid.c` (OpenGL) checks analytic plane coverage/depth within the driver-reported subpixel
+precision, draw-order
 independence, index bounds, immutable sample contents, reuse on camera/stride
 changes, slot invalidation and memory accounting. Compile like the other GL
 checks. `check-voxel-pipeline --live-hybrid`, run from `bin/`, exercises actual
@@ -164,8 +165,13 @@ RAM/GPU-memory graphs. CPU is process CPU time per frame, including workers and
 excluding waits. GPU is asynchronous elapsed render time, excluding the HUD and
 swap; unsupported/unavailable timers show N/A. These overlapping times are not
 percent utilization and should not be added. No blocking query readback is used.
-RAM is current process RSS (including driver mappings); GPU EST is engine-counted
-allocations against the 56 MiB target budget, not physical driver residency.
+RAM is current process RSS (including driver mappings). On the Acer's Linux
+R300 driver, VRAM is global Radeon DRM/TTM memory accounting, sampled at 2 Hz
+against the driver's 64 MiB capacity; it includes other applications. This reads
+software counters without GPU waits, register sampling or framebuffer readback.
+GPU EST is the fallback: engine-counted allocations against the 56 MiB budget.
+Unsupported, inaccessible or ambiguous multi-GPU devices use that estimate.
+R300 GPU timing stays N/A; memory accounting does not measure GPU utilization.
 
 One monotonic bar spans indexing, geology, materials, shaders, scene preload and
 optional RAM preload. Its weights indicate completed phases, not predicted time.
@@ -173,5 +179,6 @@ Cached, generated and skipped phases share this same bar. The geology UI change
 preserves payload identities via `cache-compat.json`; generators are unchanged.
 
 `check-performance-ui.c` (OpenGL) checks monotonic progress, GL state restoration
-with a deleted shader, current RSS, history wrap and unavailable GPU timing. Build
+with a deleted shader, current RSS, history wrap, unavailable GPU timing and
+Radeon memory polling/failure fallback when supported. Build
 like other GL checks and run from the repository root or `bin/`.

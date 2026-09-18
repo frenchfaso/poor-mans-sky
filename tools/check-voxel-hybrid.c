@@ -32,6 +32,8 @@ int main(void) {
   glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,texel);
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);tex(hybridP,"detailTex",0,white);
   float depth[4096],saved[4096];int tested=0;
+  GLint subpixelBits;glGetIntegerv(GL_SUBPIXEL_BITS,&subpixelBits);
+  float pixelQuantum=ldexpf(1.f,-subpixelBits);
   for(int reverse=0;reverse<2;reverse++) {
     HybridDraw d={0,0,0,reverse,0};glClear(GL_DEPTH_BUFFER_BIT);hybridGeometry(hybridP,&d);
     glReadPixels(0,0,64,64,GL_DEPTH_COMPONENT,GL_FLOAT,depth);
@@ -42,7 +44,12 @@ int main(void) {
         CHECK(depth[y*64+x]<worldDepthHi);
         float nd=(depth[y*64+x]-worldDepthLo)/(worldDepthHi-worldDepthLo);
         float z=clipNear/(1-nd*(clipFar-clipNear)/clipFar);
-        CHECK(z>=hit-.002f && z-hit<1.01f);tested++;
+        /* Window coordinates snap to the rasterizer's subpixel grid. On R300
+         * a top just below a pixel centre can cover it after snapping. Bound
+         * that footprint before allowing the one-metre sample interval. */
+        float lo=-2/((2*(y+.5f-pixelQuantum)/64-1)*tanf(PI/6));
+        float hi=-2/((2*(y+.5f+pixelQuantum)/64-1)*tanf(PI/6));
+        CHECK(z>=lo-.002f && z<=hi+1.01f);tested++;
       }
       if(sy>=0)CHECK(depth[y*64+x]==1);
     }
@@ -66,5 +73,6 @@ int main(void) {
   CHECK(glGetError()==GL_NO_ERROR);hybridClose();CHECK(hybridGPUBytes==0);
   glDeleteTextures(1,&white);free(n->vertices);free(n->pixels);SDL_DestroyMutex(mutex);
   SDL_GL_DeleteContext(context);SDL_DestroyWindow(window);SDL_Quit();
+  printf("raster subpixel_bits=%d quantum=%.6f pixels\n",subpixelBits,pixelQuantum);
   puts("hybrid plane: coverage, depth, order, persistent data, movement/stride reuse, slot invalidation and accounting OK");return 0;
 }
