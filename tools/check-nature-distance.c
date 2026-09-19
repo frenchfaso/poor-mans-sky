@@ -4,11 +4,11 @@
 #undef main
 int main(void) {
   static NatureCandidate candidates[NATURE_CANDIDATES];
-  for (int i=0;i<10;i++) {
+  for(qualityPreset=0;qualityPreset<3;qualityPreset++)for (int i=0;i<10;i++) {
     V3 d=i<8?norm(v3(i&1?1:-1,i&2?1:-1,i&4?1:-1)):norm(v3(1,i==8?0:1,0));
     int n=natureCandidates(d,candidates),faces=0;
     printf("cover=%d n=%d far=%.2f\n",i,n,candidates[n-1].distance);
-    if(n<=1024 || n>=NATURE_CELLS || candidates[n-1].distance<2490) return 1;
+    if(n<=100 || n>=NATURE_CELLS || candidates[n-1].distance<quality()->natureDistance-10) return 1;
     memset(natureLookup,0,sizeof(natureLookup));
     for(int k=0;k<n;k++) {
       NatureCandidate c=candidates[k];

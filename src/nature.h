@@ -559,6 +559,7 @@ static int natureNear(const void *a, const void *b) {
  * smaller physical cell size at cube corners without duplicate identities. */
 static int natureCandidates(V3 d, NatureCandidate *out) {
   int count = 0;
+  float range=quality()->natureDistance+(streamViewReady?128:0),range2=range*range;
   for (int face = 0; face < 6; face++) {
     float den = face < 2 ? d.x : face < 4 ? d.y : d.z;
     if (face & 1)
@@ -577,9 +578,11 @@ static int natureCandidates(V3 d, NatureCandidate *out) {
           continue;
         V3 q = direction(face, -1 + (x + .5f) / 4096, -1 + (y + .5f) / 4096);
         V3 delta = mul(add(q, mul(d, -1)), RADIUS);
-        float distance = sqrtf(dot(delta, delta));
-        if (distance <= quality()->natureDistance+(streamViewReady?128:0) && count < NATURE_CANDIDATES)
+        float distance2 = dot(delta, delta);
+        if (distance2 <= range2 && count < NATURE_CANDIDATES) {
+          float distance=sqrtf(distance2);
           out[count++] = (NatureCandidate){face, x, y, distance, distance, mul(q,RADIUS+elevation(q)), -1};
+        }
       }
   }
   qsort(out, count, sizeof(*out), natureNear);
@@ -690,10 +693,11 @@ static void natureUpdate(void) {
     for(int i=0;i<natureUsed;i++)if(nature[i].state)natureIndex(i);
   }
   int freeCursor = 0;
+  float inverseLodScale=1/quality()->natureLodScale;
   for (int candidate = 0; candidate < requestCount; candidate++) {
     int face = wanted[candidate]->face, x = wanted[candidate]->x,
         y = wanted[candidate]->y;
-    float distance = wanted[candidate]->viewDistance/quality()->natureLodScale;
+    float distance = wanted[candidate]->viewDistance*inverseLodScale;
     int targetLod = distance < 65 ? 0 : distance < 125 ? 1 : distance < 400 ? 2 : 3;
     int id = natureFind(face, x, y);
     if (id < 0 && requested < 4)
