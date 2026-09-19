@@ -21,13 +21,18 @@ static void updateReflection(void) {
     reflectionReady = 0;
     return;
   }
-  if (reflectionReady && frameNo - reflectionLastFrame < (reflectionInterval?reflectionInterval:quality()->reflectionEvery))
+  int size=quality()->reflectionSize;
+  if (reflectionReady && reflectionMap.w==size && frameNo - reflectionLastFrame < (reflectionInterval?reflectionInterval:quality()->reflectionEvery))
     return;
   if (reflectionReady && frameNo - reflectionLastFrame > reflectionMaxGap)
     reflectionMaxGap = frameNo - reflectionLastFrame;
-  if (!reflectionMap.tex) {
-    reflectionMap = target(128, 128, 1, 0);
-    reflectionBlur = target(128, 128, 0, 0);
+  if (reflectionMap.w!=size) {
+    glDeleteFramebuffers(1,&reflectionMap.fbo);glDeleteRenderbuffers(1,&reflectionMap.depth);
+    glDeleteTextures(1,&reflectionMap.tex);
+    glDeleteFramebuffers(1,&reflectionBlur.fbo);glDeleteTextures(1,&reflectionBlur.tex);
+    reflectionMap = target(size, size, 1, 0);
+    reflectionBlur = target(size, size, 0, 0);
+    reflectionReady=0;
     if(!reflectionBlurP)reflectionBlurP = program("bake.vert", "reflection-blur.frag");
   }
   V3 savedEye = cameraEye, savedF = viewForward, savedR = viewRight,
@@ -53,7 +58,7 @@ static void updateReflection(void) {
         reflectionVP[c * 4 + r] += projection[k * 4 + r] * model[c * 4 + k];
     }
   glBindFramebuffer(GL_FRAMEBUFFER, reflectionMap.fbo);
-  glViewport(0, 0, 128, 128);
+  glViewport(0, 0, size, size);
   glDepthRange(0, 1);
   glClearColor(0, 0, 0, 0);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -96,7 +101,7 @@ static void updateReflection(void) {
   }
   natureDrawPass(1);
   glFrontFace(GL_CCW);
-  /* Blur only the 128-square reflection, not each full-resolution water pixel.
+  /* Blur only the small reflection, not each full-resolution water pixel.
    * Preserve coverage alpha so cleared pixels cannot produce dark halos. */
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
@@ -104,12 +109,12 @@ static void updateReflection(void) {
   glUseProgram(reflectionBlurP);
   glBindFramebuffer(GL_FRAMEBUFFER, reflectionBlur.fbo);
   tex(reflectionBlurP, "sceneTex", 0, reflectionMap.tex);
-  u2(reflectionBlurP, "direction", 1.0f / 128, 0);
+  u2(reflectionBlurP, "direction", 1.0f / size, 0);
   u1(reflectionBlurP, "finalPass", 0);
   quad();
   glBindFramebuffer(GL_FRAMEBUFFER, reflectionMap.fbo);
   tex(reflectionBlurP, "sceneTex", 0, reflectionBlur.tex);
-  u2(reflectionBlurP, "direction", 0, 1.0f / 128);
+  u2(reflectionBlurP, "direction", 0, 1.0f / size);
   u1(reflectionBlurP, "finalPass", 1);
   quad();
   glEnable(GL_DEPTH_TEST);

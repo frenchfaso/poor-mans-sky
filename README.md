@@ -68,7 +68,7 @@ both the level and its purpose. Start directly with `./run.sh --preset low`
 | Near detail bubble, walk / fly | 80 / 240 m | 100 / 300 m | 140 / 420 m |
 | Vegetation / rocks range | 700 m | 1,400 m | 2,500 m |
 | Grass fade interval | 18–30 m | 25–42 m | 30–50 m |
-| Reflections | off | every 2 frames | every frame |
+| Reflections | off | 64², every frame | 128², every frame |
 | Local shadow map | 256² | 512² | 512² |
 | Post-processing | single texture sample | bloom 128² | bloom 256², vignette, dithering |
 

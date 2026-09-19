@@ -21,6 +21,13 @@ static void testSwap(SDL_Window *w) {
     assert(glow[0].w==quality()->bloomSize);
     assert(postP==(expected==0?postLowP:expected==1?postPerformanceP:postQualityP));
     if(expected==0)assert(!reflectionReady);
+    if(reflectionReady) {
+      assert(reflectionMap.w==quality()->reflectionSize && reflectionMap.h==quality()->reflectionSize);
+      assert(reflectionBlur.w==reflectionMap.w && reflectionBlur.h==reflectionMap.h);
+      assert(reflectionLastFrame==frameNo); /* Both enabled presets update every frame. */
+      float direction[2];glGetUniformfv(reflectionBlurP,uniformLocation(reflectionBlurP,"direction"),direction);
+      assert(direction[0]==0 && fabsf(direction[1]*reflectionMap.h-1)<1e-6f);
+    }
     if(sunReady)assert(sunMap.w==quality()->shadowSize);
     assert(selectedCount>0 && glGetError()==GL_NO_ERROR);
     if(live%30==29) {

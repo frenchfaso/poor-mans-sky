@@ -2186,9 +2186,9 @@ int main(int argc, char **argv) {
   printf("STATE altitude=%.1f pitch=%.3f throttle=%.2f mode=%s\n",
          sqrtf(dot(eye, eye)) - RADIUS, pitch, throttle,
          flying ? "FLY" : "WALK");
-  printf("REFLECTION ready=%d terrain_patches=%d size=128 interval=%d updates=%d max_gap=%d MORPH "
+  printf("REFLECTION ready=%d terrain_patches=%d size=%d interval=%d updates=%d max_gap=%d MORPH "
          "transitions=%d active=%d\n",
-         reflectionReady, reflectionDraws, quality()->reflectionEvery?(reflectionInterval?reflectionInterval:quality()->reflectionEvery):0, reflectionUpdates,
+         reflectionReady, reflectionDraws, reflectionMap.w, quality()->reflectionEvery?(reflectionInterval?reflectionInterval:quality()->reflectionEvery):0, reflectionUpdates,
          reflectionMaxGap, morphStarted, morphActive);
   printf("STREAM_PRIORITY directional=%d bubble=%.0f detail_range=%.0f bands=4,16,64 margin_deg=%.0f retain_deg=%.0f replacements=%d\n", streamViewReady,streamBubble,streamDetailRange,quality()->streamMargin,quality()->streamMargin+6,priorityReplacements);
   printf("GENERATION jobs=%d worker_ms=%.1f\n", generatedJobs, generationMS);
