@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Bake four seeded cloud volumes into the existing 128-square RGBA atlas.
+"""Bake four seeded cloud volumes into the 256-square three-view RGBA atlas.
 
 Pure Python; density uses ellipsoid guides and three octaves of value noise.
 Front-to-back integration stores opacity and neutral top-light shading. Runtime
@@ -11,8 +11,8 @@ import math
 import struct
 from pathlib import Path
 
-SIZE = 128
-TILE = SIZE // 2
+SIZE = 256
+TILE = 64
 SEED = 20260915
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -50,7 +50,8 @@ def density(x, y, z, shapes, seed):
 
 def generate():
     pixels = bytearray(SIZE*SIZE*4)
-    for variant in range(4):
+    for tile in range(12):
+        variant, face = divmod(tile, 3)
         shapes, seed = guides(variant), SEED+variant*97
         for y in range(TILE):
             v = (y-31.5)/31.5
@@ -63,19 +64,20 @@ def generate():
                 transmittance, radiance = 1.0, 0.0
                 for k in range(28):
                     z = .75-(k+.5)*1.5/28
-                    d = density(u,v,z,shapes,seed)
+                    px, py, pz = (u,v,z) if face == 0 else (u,z,v) if face == 1 else (z,v,u)
+                    d = density(px,py,pz,shapes,seed)
                     if d <= 0:
                         continue
                     light_depth = 0.0
                     for step in (1,2,3,4):
-                        light_depth += density(u-.025*step,v+.12*step,z+.06*step,shapes,seed)
+                        light_depth += density(px-.025*step,py+.12*step,pz+.06*step,shapes,seed)
                     light = .57+.40*math.exp(-light_depth*.55)
                     opacity = 1-math.exp(-d*1.5/28*1.25)
                     radiance += transmittance*opacity*light
                     transmittance *= 1-opacity
                 opacity = (1-transmittance)*min(1.0,edge/.06)
                 shade = radiance/max(1e-9,1-transmittance)
-                i = (((variant//2)*TILE+y)*SIZE+(variant%2)*TILE+x)*4
+                i = (((tile//4)*TILE+y)*SIZE+(tile%4)*TILE+x)*4
                 grey = round(max(0,min(1,shade))*255)
                 pixels[i:i+4] = bytes((grey,grey,grey,round(opacity*255)))
     return pixels
@@ -88,7 +90,7 @@ def main():
     args.output.parent.mkdir(parents=True,exist_ok=True)
     if not args.output.exists() or args.output.read_bytes()!=content:
         args.output.write_bytes(content)
-    print(f'Cloud atlas ready: {SIZE}x{SIZE} RGBA, four volumes, seed {SEED}')
+    print(f'Cloud atlas ready: {SIZE}x{SIZE} RGBA, four volumes, three projections each, seed {SEED}')
 
 if __name__=='__main__':
     main()

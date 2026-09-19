@@ -59,9 +59,8 @@ Quest’ultimo test modifica temporaneamente due sorgenti e li ripristina nel bl
 
 ## Procedural assets
 
-`make clouds`: generate the four cloud density/lighting projections offline.
-The 128x128 RGBA atlas consumes the same 64 KiB of VRAM as the former startup
-texture. Run `python3 tools/check-cloud-atlas.py` to check its format, opacity
+`make clouds`: generate three orthogonal views of each of four cloud volumes offline.
+The 256x256 RGBA atlas consumes 256 KiB of VRAM. Run `python3 tools/check-cloud-atlas.py` to check its format, opacity
 and transparent padding against the octagonal runtime mesh. The generator
 uses only Python's standard library and runs again only
 when its source changes. Runtime builds require the generated asset.
@@ -96,6 +95,7 @@ Clouds are composed after opaque actors. No GPU readback is added to the runtime
 
 `check-cloud-roll.c`: OpenGL check (compile as above and run from `bin/`).
 Reads the cloud vertex buffer across 24 roll angles: world-space geometry,
-UVs, color and opacity must remain identical. Also checks continuous billboard
-frames through zenith/nadir and a reversed view. Clouds transport their frame
-with viewing direction independently of camera roll; no extra GPU pass or texture.
+UVs, color and opacity must remain identical, including after compound yaw/pitch
+loops. Also checks the three orthogonal projection weights. Planet-fixed cards
+blend according to the camera position, with no orientation history. One draw
+and one texture sample per fragment; projected overlap retains its area budget.
