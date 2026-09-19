@@ -82,3 +82,13 @@ with the specialized opaque/reflection programs in 12 cases: daytime/nighttime
 lighting, fog, and planes that clip all, some or none of the geometry. Limits:
 3/255 maximum and less than 0.5/255 mean error. Also run `check-terrain-detail.c`
 for the CPU fog and texture transition variants.
+
+## Flight rendering
+
+`check-flight-rendering.c`: compile like the OpenGL checks and run from `bin/`.
+Checks actual depth-test occlusion of the third-person ship near either body's
+surface, visibility despite distant near clipping in space, foreground alpha
+blending, lighting based on the final camera, and shadow-cache invalidation for
+roll and boarding state. The ship shares the nearest body's depth projection
+near the surface; the reserved foreground range is used only in clear space.
+Clouds are composed after opaque actors. No GPU readback is added to the runtime.
