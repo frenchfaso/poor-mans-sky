@@ -192,3 +192,13 @@ preserves payload identities via `cache-compat.json`; generators are unchanged.
 with a deleted shader, current RSS, history wrap, unavailable GPU timing and
 Radeon memory polling/failure fallback when supported. Build
 like other GL checks and run from the repository root or `bin/`.
+
+## Flight rendering
+
+`check-flight-rendering.c`: compile like the OpenGL checks and run from `bin/`.
+Checks actual depth-test occlusion of the third-person ship near either body's
+surface, visibility despite distant near clipping in space, foreground alpha
+blending, lighting based on the final camera, and shadow-cache invalidation for
+roll and boarding state. The ship shares the nearest body's depth projection
+near the surface; the reserved foreground range is used only in clear space.
+Clouds are composed after opaque actors. No GPU readback is added to the runtime.

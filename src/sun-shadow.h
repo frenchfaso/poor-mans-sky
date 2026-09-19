@@ -5,7 +5,8 @@
 static Target sunMap;
 static GLuint sunCastP,sunGroundP;
 static int sunShadows=1,sunReady,sunLast=-100,sunUpdates,sunCasterDraws,sunReceiverDraws;
-static V3 sunAnchor,sunRight,sunUp,sunDirection,sunLastEye,sunLastShip,sunLastForward;
+static V3 sunAnchor,sunRight,sunUp,sunDirection,sunLastEye,sunLastShip,sunLastForward,sunLastUp;
+static int sunLastFlying=-1;
 static double sunShadowMS;
 static void sunProxy(int shape,V3 pos,V3 size) {
   glPushMatrix();glTranslatef(pos.x,pos.y,pos.z);glScalef(size.x,size.y,size.z);
@@ -21,10 +22,12 @@ static void sunShadowUpdate(void) {
   if(!sunShadows || height<.12f || sqrtf(dot(cameraEye,cameraEye))-RADIUS-elevation(norm(cameraEye))>100) {sunReady=0;return;}
   V3 movingEye=add(cameraEye,mul(sunLastEye,-1));
   V3 currentShip=flying?eye:shipPos,currentForward=flying?flightForward:shipHeading;
+  V3 currentUp=flying?flightUp:bodyUp(shipPos);
   V3 movingShip=add(currentShip,mul(sunLastShip,-1));
   V3 movingSun=add(sun,mul(sunDirection,-1));
   if(sunReady && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingEye,movingEye)<.09f &&
-     dot(movingShip,movingShip)<.0625f && dot(currentForward,sunLastForward)>.9999f) return;
+     dot(movingShip,movingShip)<.0625f && dot(currentForward,sunLastForward)>.9999f &&
+     dot(currentUp,sunLastUp)>.9999f && flying==sunLastFlying) return;
   Uint64 start=SDL_GetPerformanceCounter();
   if(!sunMap.tex) {
     sunMap=target(512,512,1,0);
@@ -92,7 +95,7 @@ static void sunShadowUpdate(void) {
   glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
   if(wire)glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
   sunReady=1;sunLast=frameNo;sunUpdates++;
-  sunLastEye=cameraEye;sunLastShip=currentShip;sunLastForward=currentForward;
+  sunLastEye=cameraEye;sunLastShip=currentShip;sunLastForward=currentForward;sunLastUp=currentUp;sunLastFlying=flying;
   sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
 }
 static void sunShadowGround(void) {

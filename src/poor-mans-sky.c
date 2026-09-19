@@ -1186,12 +1186,12 @@ static void drawSky(void) {
   u3(skyP, "forwardDir", f);
   u3(skyP, "rightDir", r);
   u3(skyP, "upDir", u);
-  u3(skyP, "radial", norm(eye));
+  u3(skyP, "radial", norm(cameraEye));
   u3(skyP, "sun", sun);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_CUBE_MAP, skyCube);
   glUniform1i(uniformLocation(skyP, "starTex"), 0);
-  float solar = dot(sun, norm(eye));
+  float solar = dot(sun, norm(cameraEye));
   float air = exp2f(-fmaxf(altitude, 0) / 9000);
   u1(skyP, "horizonDip",
      sqrtf(fmaxf(0, 1 - powf(RADIUS / (RADIUS + fmaxf(altitude, 0)), 2))));
@@ -1217,13 +1217,38 @@ static void drawSky(void) {
 #include "clouds.h"
 #include "vram-budget.h"
 #include "voxel-terrain.h"
+/* Lighting follows the final chase camera, after this frame's simulation. */
+static void updateSceneLighting(void) {
+  float solarHeight = dot(sun, norm(cameraEye));
+  solarDaylight = clampf((solarHeight + .10f) * 3, .025f, 1);
+  float dusk = clampf(1 - fabsf(solarHeight) * 5, 0, 1);
+  float localAir=exp2f(-fmaxf(sqrtf(dot(cameraEye,cameraEye))-RADIUS,0)/13000.f);
+  sceneExposure = 1 + 2.5f * (1 - solarDaylight)*localAir;
+  ambientLight = add(mul(v3(.12, .16, .22), solarDaylight),
+                     mul(v3(.008, .013, .021), 1 - solarDaylight));
+  ambientLight=add(mul(ambientLight,localAir),mul(v3(.003,.004,.006),1-localAir));
+  sunLight = mul(v3(1.05f,.94f,.79f),1-localAir+localAir*clampf((solarHeight+.06f)*5,0,1));
+  fogColor = add(mul(v3(.19f, .29f, .42f), solarDaylight * (1 - dusk * .45f)),
+                 add(mul(v3(.24f, .083f, .028f), dusk * solarDaylight),
+                     mul(v3(.0025, .005, .009), 1 - solarDaylight)));
+}
+/* Share world depth near either surface so terrain/vegetation can occlude the
+ * third-person ship. Reserve foreground depth only in clear interplanetary
+ * space, where the world's distant near plane would clip the ship itself. */
+static void actorCamera(float near,float far,double lo,double hi) {
+  if(flying && near>2) {near=2;far=2000;lo=0;hi=.01;}
+  clipNear=near;clipFar=far;glDepthRange(lo,hi);camera();
+}
 static void drawScene(void) {
   V3 f, r, u;
   cameraBasis(&f, &r, &u);
   cameraEye = flying ? add(eye, add(mul(f, -14), mul(u, 4)))
                      : add(eye, mul(bodyUp(eye), -.75f));
-  if (bodyAltitude(cameraEye) < bodyHeight(cameraEye)+.5f)
+  float cameraClearance=bodyAltitude(cameraEye)-bodyHeight(cameraEye);
+  if (cameraClearance < .5f) {
     cameraEye = bodyFloor(cameraEye,.5f);
+    cameraClearance=.5f;
+  }
   if (flying) {
     V3 target = eye;
     f = norm(add(target, mul(cameraEye, -1)));
@@ -1233,12 +1258,15 @@ static void drawScene(void) {
   viewForward = cullForward = f;
   viewRight = r;
   viewUp = u;
+  updateSceneLighting();
   /* Disjoint celestial bodies get separate depth ranges and projections.
    * A nearby moon must not steal depth precision from distant planet coasts. */
   float planetDistance=sqrtf(dot(cameraEye,cameraEye));
   V3 moonDelta=add(cameraEye,mul(moonCenter(),-1));float moonDistance=sqrtf(dot(moonDelta,moonDelta));
   int moonCloser=moonDistance-MOON_RADIUS<planetDistance-RADIUS;
   float safeNear=worldNearPlane(cameraEye,flying);
+  /* The chase camera can sit only 0.5 m above ground after collision. */
+  safeNear=fminf(safeNear,fmaxf(.25f,cameraClearance*.5f));
   float planetNear=fmaxf(safeNear,(planetDistance-RADIUS-20000)*.1f);
   float moonNear=fmaxf(safeNear,(moonDistance-MOON_RADIUS-12000)*.1f);
   float planetFar=fmaxf(80000,planetDistance+RADIUS+20000),moonFar=fmaxf(80000,moonDistance+MOON_RADIUS+12000);
@@ -1441,12 +1469,11 @@ static void drawScene(void) {
   drawSky();
   gpuCheckpoint("moon");
   clipNear=moonNear;clipFar=moonFar;glDepthRange(moonLo,moonHi);camera();moonDraw();
-  /* Transparent atmosphere is composited after both opaque bodies. */
+  if(moonCloser)actorCamera(moonNear,moonFar,moonLo,moonHi);
+  else actorCamera(planetNear,planetFar,planetLo,planetHi);
+  drawActors();profileMark(5);
+  /* Transparent clouds blend over opaque actors and respect their depth. */
   clipNear=planetNear;clipFar=planetFar;glDepthRange(planetLo,planetHi);camera();cloudsDraw();
-  if(flying){clipNear=2;clipFar=2000;glDepthRange(0,.01);}
-  else if(nearMoon(eye)){clipNear=moonNear;clipFar=moonFar;glDepthRange(moonLo,moonHi);}
-  camera();drawActors();profileMark(5);
-  clipNear=planetNear;clipFar=planetFar;camera();
   glDepthRange(0, 1);
   profileMark(3);
 }
@@ -1838,18 +1865,6 @@ int main(int argc, char **argv) {
     clockTime += realDT;
     simulationDebt = fmin(.5, simulationDebt + realDT);
     advanceCelestial();
-    float solarHeight = dot(sun, norm(eye));
-    solarDaylight = clampf((solarHeight + .10f) * 3, .025f, 1);
-    float dusk = clampf(1 - fabsf(solarHeight) * 5, 0, 1);
-    float localAir=exp2f(-fmaxf(sqrtf(dot(eye,eye))-RADIUS,0)/13000.f);
-    sceneExposure = 1 + 2.5f * (1 - solarDaylight)*localAir;
-    ambientLight = add(mul(v3(.12, .16, .22), solarDaylight),
-                       mul(v3(.008, .013, .021), 1 - solarDaylight));
-    ambientLight=add(mul(ambientLight,localAir),mul(v3(.003,.004,.006),1-localAir));
-    sunLight = mul(v3(1.05f,.94f,.79f),1-localAir+localAir*clampf((solarHeight+.06f)*5,0,1));
-    fogColor = add(mul(v3(.19f, .29f, .42f), solarDaylight * (1 - dusk * .45f)),
-                   add(mul(v3(.24f, .083f, .028f), dusk * solarDaylight),
-                       mul(v3(.0025, .005, .009), 1 - solarDaylight)));
     SDL_Event e;
     int shot = 0;
     while (SDL_PollEvent(&e)) {
@@ -2156,7 +2171,7 @@ int main(int argc, char **argv) {
              active, waiting, triangles, drawn);
       printf("CAPTURE frame=%d selected=%d queue=%d resident=%d daylight=%.3f "
              "solarHeight=%.3f\n",
-             frameNo, selectedCount, qcount, resident, solarDaylight, solarHeight);
+             frameNo, selectedCount, qcount, resident, solarDaylight, dot(sun,norm(cameraEye)));
       SDL_UnlockMutex(mutex);
     }
     gpuCheckpoint("swap-begin");SDL_GL_SwapWindow(window);gpuCheckpoint("swap-end");
