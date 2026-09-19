@@ -166,7 +166,7 @@ static void overlay(void) {
   glColor4f(.01f,.018f,.03f,.88f);perfRect(16,16,212,128);
   glColor4f(.91f,.96f,1,1);char text[100];
   snprintf(text,sizeof(text),"%.0F FPS",perfFPS);label(24,24,text,2.5f);
-  label(144,24,qualityPreset==0?"LOW":qualityPreset==1?"MEDIUM":"HIGH",1);snprintf(text,sizeof(text),"%dx%d",rw,rh);label(144,36,text,1);
+  label(144,24,qualityPreset==0?"LOW":qualityPreset==1?"MEDIUM":"HIGH",1);snprintf(text,sizeof(text),"%dX%d",rw,rh);label(144,36,text,1);
   PerfPoint latest=perfCount?perfHistory[(perfHead+PERF_HISTORY-1)%PERF_HISTORY]:(PerfPoint){0,-1,-1,0,0};
   float computeMax=10,ramMax=64;
   for(int i=0;i<perfCount;i++) {
