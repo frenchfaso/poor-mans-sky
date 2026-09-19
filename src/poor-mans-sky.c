@@ -80,11 +80,12 @@ static SDL_mutex *mutex;
 static SDL_cond *cond;
 static SDL_Thread *worker;
 static int selected[1024], selectedCount, requestCount, ramHits;
-static int width = 1024, height = 768, rw = 768, rh = 576,
+static int width = 1024, height = 768, rw = 640, rh = 480,
            indexCount[4], mouse = 0, flying = 1, wire = 0, hud = 1, bloom = 1;
-static SDL_DisplayMode displayModes[64];
-static int displayModeCount, displayModeIndex, requestedWidth=640, requestedHeight=480;
-static int fixedWindowed;
+/* Fixed 4:3 output; scene resolution is independent of quality and scanout. */
+static const int renderSizes[][2]={{320,240},{400,300},{512,384},{640,480},{800,600},{1024,768}};
+#define RENDER_SIZE_COUNT ((int)(sizeof(renderSizes)/sizeof(renderSizes[0])))
+static int renderSizeIndex=3;
 static SDL_GameController *pad;
 static V3 velocity, cullForward, flightForward, flightUp, flightRates;
 static float throttle, solarDaylight = 1, dayOffset = .12f, dayLength = 2400;
@@ -984,53 +985,30 @@ static void resizeBloom(void) {
 }
 static void resolution(void) {
   SDL_GL_GetDrawableSize(window, &width, &height);
-  rw = (int)fmaxf(1,floorf(width*quality()->renderScale));
-  rh = (int)fmaxf(1,floorf(height*quality()->renderScale));
-  if (scene.tex) {
-    int tw = 1, th = 1;
-    while (tw < rw)
-      tw *= 2;
-    while (th < rh)
-      th *= 2;
-    if (tw != scene.w || th != scene.h) {
-      glDeleteFramebuffers(1, &scene.fbo);
-      glDeleteRenderbuffers(1, &scene.depth);
-      glDeleteTextures(1, &scene.tex);
-      scene = target(tw, th, 1, 0);
-    }
+  rw = renderSizes[renderSizeIndex][0];
+  rh = renderSizes[renderSizeIndex][1];
+  int tw=1,th=1;
+  while(tw<rw)tw*=2;
+  while(th<rh)th*=2;
+  if(tw!=scene.w || th!=scene.h) {
+    glBindFramebuffer(GL_FRAMEBUFFER,0);
+    glDeleteFramebuffers(1,&scene.fbo);
+    glDeleteRenderbuffers(1,&scene.depth);
+    glDeleteTextures(1,&scene.tex);
+    scene=target(tw,th,1,0);
   }
   resizeBloom();
   printf("RESOLUTION internal=%dx%d display=%dx%d target=%dx%d\n", rw, rh,
          width, height, scene.w, scene.h);
 }
-static void changeDisplayMode(int delta) {
-  static Uint32 lastChange;
-  Uint32 now=SDL_GetTicks();
-  int next=displayModeIndex+delta;
-  if(next<0 || next>=displayModeCount || (lastChange && now-lastChange<1000))return;
-  SDL_DisplayMode old=displayModes[displayModeIndex], chosen=displayModes[next];
-  int swapInterval=SDL_GL_GetSwapInterval();
-  printf("DISPLAY_CHANGE begin %dx%d -> %dx%d\n",old.w,old.h,chosen.w,chosen.h);
-  fflush(stdout);
-  /* Drain RV350 command buffers before X replaces scanout/back buffers. Release
-   * the drawable, leave exclusive fullscreen, then set the new mode once. */
-  glBindFramebuffer(GL_FRAMEBUFFER,0);glUseProgram(0);glFinish();
-  if(SDL_GL_MakeCurrent(window,NULL)) {fprintf(stderr,"DISPLAY detach: %s\n",SDL_GetError());return;}
-  int failed=0;
-  if(!fixedWindowed && SDL_SetWindowFullscreen(window,0))failed=1;
-  if(!failed && !fixedWindowed && SDL_SetWindowDisplayMode(window,&chosen))failed=1;
-  if(!failed)SDL_SetWindowSize(window,chosen.w,chosen.h);
-  if(!failed && !fixedWindowed && SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN))failed=1;
-  if(failed) {
-    fprintf(stderr,"DISPLAY rollback: %s\n",SDL_GetError());
-    SDL_SetWindowDisplayMode(window,&old);SDL_SetWindowSize(window,old.w,old.h);
-    if(!fixedWindowed)SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN);
-  } else displayModeIndex=next;
-  if(SDL_GL_MakeCurrent(window,context))die(SDL_GetError());
-  SDL_GL_SetSwapInterval(swapInterval);
-  SDL_PumpEvents();
-  resolution();lodRevision++;lastChange=SDL_GetTicks();
-  printf("DISPLAY_CHANGE complete %dx%d\n",width,height);fflush(stdout);
+static void changeRenderSize(int delta) {
+  int next=renderSizeIndex+delta;
+  if(next<0 || next>=RENDER_SIZE_COUNT)return;
+  renderSizeIndex=next;
+  resolution();
+  /* Screen-space LOD and async visibility must follow the new pixel density. */
+  lodRevision++;
+  occlusionEpoch++;occlusionSignature=0;occlusionStable=0;occlusionCooldown=0;
 }
 static void camera(void) {
   V3 f = viewForward, r = viewRight, u = viewUp;
@@ -1596,8 +1574,12 @@ int main(int argc, char **argv) {
       worldSeed = (uint32_t)strtoul(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--performance")) {
       qualityPreset = 0;
-    } else if (!strcmp(argv[i], "--resolution") && i + 1 < argc) {
-      if(sscanf(argv[++i], "%dx%d", &requestedWidth, &requestedHeight)!=2)die("invalid resolution");
+    } else if ((!strcmp(argv[i], "--resolution") || !strcmp(argv[i], "--internal-resolution")) && i + 1 < argc) {
+      int w,h,found=-1;char extra;
+      if(sscanf(argv[++i], "%dx%d%c", &w, &h, &extra)!=2)die("invalid internal resolution");
+      for(int r=0;r<RENDER_SIZE_COUNT;r++)if(renderSizes[r][0]==w && renderSizes[r][1]==h)found=r;
+      if(found<0)die("internal resolution must be 320x240, 400x300, 512x384, 640x480, 800x600 or 1024x768");
+      renderSizeIndex=found;
     }
     else if (!strcmp(argv[i], "--preset") && i+1<argc) {
       const char *name=argv[++i];int found=-1;
@@ -1652,7 +1634,7 @@ int main(int argc, char **argv) {
       tour = 1;
     else if (!strcmp(argv[i], "--help")) {
       puts("poor-mans-sky [--frames N] [--capture image.ppm] [--view 1|2] [--seed N] "
-           "[--moon] [--time 0..1] [--resolution WxH] [--altitude metres-AGL] [--pitch radians] [--still] "
+           "[--moon] [--time 0..1] [--resolution internal-WxH] [--altitude metres-AGL] [--pitch radians] [--still] "
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--preset low|medium|high] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-streaming] [--legacy-terrain] [--preload|--no-preload] "
@@ -1687,31 +1669,22 @@ int main(int argc, char **argv) {
   SDL_DisplayMode display;
   if (SDL_GetCurrentDisplayMode(0, &display))
     die(SDL_GetError());
-  fixedWindowed=windowed;
-  for(int i=0;i<SDL_GetNumDisplayModes(0) && displayModeCount<64;i++) {
-    SDL_DisplayMode m;
-    if(SDL_GetDisplayMode(0,i,&m) || m.w<640 || m.h<480 || m.w>2048 || m.h>2048)continue;
-    int duplicate=0;
-    for(int j=0;j<displayModeCount;j++)if(displayModes[j].w==m.w && displayModes[j].h==m.h) {
-      if(abs(m.refresh_rate-60)<abs(displayModes[j].refresh_rate-60))displayModes[j]=m;
-      duplicate=1;break;
+  SDL_DisplayMode output=display;
+  width=1024;height=768;
+  if(!windowed) {
+    int found=0;
+    for(int i=0;i<SDL_GetNumDisplayModes(0);i++) {
+      SDL_DisplayMode m;
+      if(SDL_GetDisplayMode(0,i,&m) || m.w!=width || m.h!=height)continue;
+      if(!found || abs(m.refresh_rate-60)<abs(output.refresh_rate-60))output=m;
+      found=1;
     }
-    if(!duplicate)displayModes[displayModeCount++]=m;
+    if(!found)die("1024x768 fullscreen unavailable; use --windowed");
   }
-  if(!displayModeCount)displayModes[displayModeCount++]=display;
-  for(int i=0;i<displayModeCount;i++)for(int j=i+1;j<displayModeCount;j++)
-    if(displayModes[j].w*displayModes[j].h<displayModes[i].w*displayModes[i].h) {
-      SDL_DisplayMode t=displayModes[i];displayModes[i]=displayModes[j];displayModes[j]=t;
-    }
-  for(int i=0;i<displayModeCount;i++) {
-    printf("DISPLAY_MODE %d %dx%d @%d\n",i,displayModes[i].w,displayModes[i].h,displayModes[i].refresh_rate);
-    if(displayModes[i].w==requestedWidth && displayModes[i].h==requestedHeight)displayModeIndex=i;
-  }
-  width=displayModes[displayModeIndex].w;height=displayModes[displayModeIndex].h;
   window = SDL_CreateWindow("Poor Man's Sky", SDL_WINDOWPOS_CENTERED,
       SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_OPENGL);
   if (!window)die(SDL_GetError());
-  if(!windowed && (SDL_SetWindowDisplayMode(window,&displayModes[displayModeIndex]) ||
+  if(!windowed && (SDL_SetWindowDisplayMode(window,&output) ||
       SDL_SetWindowFullscreen(window,SDL_WINDOW_FULLSCREEN)))die(SDL_GetError());
   gpuCheckpoint("create-context");
   context = SDL_GL_CreateContext(window);
@@ -1773,14 +1746,7 @@ int main(int argc, char **argv) {
   postLowP = program("bake.vert", "post-low.frag");
   brightP = program("bake.vert", "bright.frag");
   blurP = program("bake.vert", "blur.frag");
-  int tw = 1, th = 1;
-  while (tw < width)
-    tw *= 2;
-  while (th < height)
-    th *= 2;
-  scene = target(tw, th, 1, 0);
-  glow[0] = target(256, 256, 0, 0);
-  glow[1] = target(256, 256, 0, 0);
+  resolution();
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LEQUAL);
   glCullFace(GL_BACK);
@@ -1788,7 +1754,6 @@ int main(int argc, char **argv) {
   natureInit();
   if (!still)
     openPad();
-  resolution();
   view(viewNo);
   celestialFrameSpawnMoon(eye,heading);
   celestial=celestialAt(0,dayOffset,lunarPhaseOffset);sun=celestial.sun;
@@ -1904,10 +1869,10 @@ int main(int argc, char **argv) {
           velocity = v3(0, 0, 0);
         }
         if (k == SDLK_MINUS || k == SDLK_KP_MINUS) {
-          changeDisplayMode(-1);
+          changeRenderSize(-1);
         }
         if (k == SDLK_PLUS || k == SDLK_EQUALS || k == SDLK_KP_PLUS) {
-          changeDisplayMode(1);
+          changeRenderSize(1);
         }
         if (k == SDLK_f || k == SDLK_e)
           interactShip();
@@ -1940,7 +1905,7 @@ int main(int argc, char **argv) {
               "Flight: LB/RB yaw, X brake, Y land. WASD pitch/roll, Q/R yaw.\n"
               "PgUp/PgDn forward/reverse (hold). F6 advance time. Start pause. "
               "1/2 reset.\n"
-              "+/- resolution; F2 HUD; F4 low/medium/high; F3 wireframe; "
+              "+/- internal resolution (320x240 to 1024x768); F2 HUD; F4 low/medium/high; F3 wireframe; "
               "F12 screenshot; "
               "Esc release/exit.",
               window);

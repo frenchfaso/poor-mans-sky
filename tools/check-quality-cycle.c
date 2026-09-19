@@ -12,12 +12,22 @@ static void testSwap(SDL_Window *window);
 #undef main
 #undef SDL_GL_SwapWindow
 #include <assert.h>
-static int live,expected=1,changes;
+static int live,expected=1,changes,sizeChanges,expectedSize=-1,outputWidth,outputHeight;
+static Uint32 outputFlags;
+static SDL_GLContext originalContext;
 static void testSwap(SDL_Window *w) {
   if(!preloading && drawn>0) {
-    assert(qualityPreset==expected);
-    assert(rw==(int)(width*quality()->renderScale));
-    assert(rh==(int)(height*quality()->renderScale));
+    if(expectedSize<0) {
+      expectedSize=renderSizeIndex;outputWidth=width;outputHeight=height;
+      outputFlags=SDL_GetWindowFlags(w)&SDL_WINDOW_FULLSCREEN;originalContext=SDL_GL_GetCurrentContext();
+    }
+    assert(renderSizeIndex==expectedSize && qualityPreset==expected);
+    assert(width==outputWidth && height==outputHeight);
+    assert((SDL_GetWindowFlags(w)&SDL_WINDOW_FULLSCREEN)==outputFlags);
+    assert(SDL_GL_GetCurrentContext()==originalContext);
+    if(outputFlags) {SDL_DisplayMode mode;assert(!SDL_GetCurrentDisplayMode(0,&mode));assert(mode.w==outputWidth && mode.h==outputHeight);}
+    assert(rw==renderSizes[renderSizeIndex][0]);
+    assert(rh==renderSizes[renderSizeIndex][1]);
     assert(glow[0].w==quality()->bloomSize);
     assert(postP==(expected==0?postLowP:expected==1?postPerformanceP:postQualityP));
     if(expected==0)assert(!reflectionReady);
@@ -40,6 +50,14 @@ static void testSwap(SDL_Window *w) {
         assert(SDL_PushEvent(&event)==1);expected=(expected+1)%3;changes++;
       }
     }
+    if(live%10==9 && live<190) {
+      static const int steps[]={-1,-1,-1,-1,1,1,1,1,1,1,-1,-1,-1,-1,-1,-1,1,1,1};
+      int delta=steps[live/10];
+      SDL_Event event={0};event.type=SDL_KEYDOWN;
+      event.key.keysym.sym=delta<0?(sizeChanges%2?SDLK_KP_MINUS:SDLK_MINUS):(sizeChanges%2?SDLK_KP_PLUS:SDLK_EQUALS);
+      assert(SDL_PushEvent(&event)==1);
+      expectedSize=(int)clampf(expectedSize+delta,0,RENDER_SIZE_COUNT-1);sizeChanges++;
+    }
     if(live==90) {
       flying=1;eye=add(eye,mul(bodyUp(eye),100));
       flightForward=heading;flightUp=bodyUp(eye);velocity=v3(0,0,0);throttle=0;
@@ -50,7 +68,7 @@ static void testSwap(SDL_Window *w) {
 }
 int main(int argc,char **argv) {
   int result=gameMain(argc,argv);
-  assert(!result && live>=210 && changes==6);
-  puts("PASS two complete F4 cycles, walk/fly, live workers, coverage and GPU resources");
+  assert(!result && live>=210 && changes==6 && sizeChanges==19);
+  puts("PASS two F4 cycles, all internal sizes via +/- keys, bounded controls, fixed output/context, walk/fly, live workers and GPU resources");
   return result;
 }

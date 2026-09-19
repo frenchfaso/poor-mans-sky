@@ -27,7 +27,7 @@ il riordinamento dei tasselli e la ricostruzione dopo un cambio LOD.
 
 `check-index.c`: confronta le 225 celle indicizzate con il generatore float, incluse le tolleranze di quantizzazione.
 
-`check-render-targets.c`: quindici combinazioni dimensione/qualità, FBO e dimensioni drawable. I cambi fullscreen reali vanno verificati separatamente sull’hardware destinatario; `--still` ignora gli eventi di input, quindi non usarlo per i test dei tasti.
+`check-render-targets.c`: tutte le 18 combinazioni risoluzione interna/preset, completezza FBO, formato4:3, drawable invariato e limiti dei tasti. `check-quality-cycle.c` verifica anche i tasti +/−, inclusi quelli del tastierino, durante i cicli F4, mantenendo invariati modalità video e contesto GL. `--still` ignora gli eventi di input: non usarlo per i test dei tasti.
 
 Build headless Mac dei test CPU: `clang -std=c99 -O2 -ffp-contract=off -Wno-deprecated-declarations -I/opt/homebrew/include -L/opt/homebrew/lib tools/check-packed.c -o /tmp/check-packed -lSDL2 -framework OpenGL -lm -lpthread`.
 
@@ -137,7 +137,8 @@ use triangle strips, preserving the workaround for native-line driver lockups.
 
 Exercises two complete F4 cycles through real SDL key events, with terrain and
 vegetation workers active, in walk and fly. Checks coarse planet coverage,
-render sizes, shader selection, bloom targets, reflection state and shadow sizes.
+all six internal sizes, fixed output/context, shader selection, bloom targets,
+reflection state and shadow sizes. The internal resolution survives F4 changes.
 Do not pass `--still` (it ignores keys) or a non-default startup preset.
 `check-stream-view.c` also checks distance limits/hysteresis for all three presets
 and both movement modes; `check-flight-rendering.c` checks shadow map resizing

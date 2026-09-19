@@ -50,20 +50,24 @@ cd bin
 ./poor-mans-sky
 ```
 
-On Linux, default presentation is exclusive fullscreen at 640×480. `+` and `-` cycle the
-available X display modes. Use `--windowed` for a window. F1 lists controls;
+Output stays at **1024×768**, fullscreen on Linux and windowed through the Mac
+launcher. `+` / `-` change only the internal resolution, stopping at either end:
+**320×240 → 400×300 → 512×384 → 640×480 → 800×600 → 1024×768**.
+The default internal resolution is **640×480**, independent of the F4 preset;
+`--resolution 512x384` (alias `--internal-resolution`) selects it at startup.
+The profiler displays the selected internal size. Use `--windowed` for a window. F1 lists controls;
 F2 toggles the HUD, F3 wireframe, F4 cycles Low → Medium → High → Low, F5 sun shadows,
 F6 advances time, F8 clouds, and F12 captures a screenshot.
 
 ### Quality presets
 
 Medium/Balanced is the default. F4 cycles all three presets; the profiler shows
-both the level and its purpose. Start directly with `./run.sh --preset low`
+the level and internal resolution. Start directly with `./run.sh --preset low`
 (or `medium` / `high`); `--performance` is an alias for Low.
 
 | Setting | Low / Performance | Medium / Balanced | High / Quality |
 | --- | --- | --- | --- |
-| Internal resolution at 640×480 | 480×360 | 640×480 | 640×480 |
+| Default internal resolution (adjustable with +/−) | 640×480 | 640×480 | 640×480 |
 | Terrain detail range, walk / fly | 8 / 24 km | 16 / 48 km | 32 / 96 km |
 | Near detail bubble, walk / fly | 80 / 240 m | 100 / 300 m | 140 / 420 m |
 | Vegetation / rocks range | 700 m | 1,400 m | 2,500 m |

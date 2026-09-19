@@ -19,24 +19,25 @@ int main(void) {
   CHECK(window);
   context = SDL_GL_CreateContext(window);
   CHECK(context);
-  scene = target(1024, 1024, 1, 0);
-  for (int k = 0; k < 2; k++)
-    glow[k] = target(256, 256, 0, 0);
-  width = 1024;
-  height = 768;
-  for (int p = 0; p < 3; p++)
-    for (int i = 0; i < 5; i++) {
-      setQualityPreset(p);
-      int sizes[5][2]={{640,480},{720,480},{848,480},{800,600},{1024,768}};
-      SDL_SetWindowSize(window,sizes[i][0],sizes[i][1]);
-      resolution();
-      CHECK(scene.w >= rw && scene.h >= rh && scene.w < 2 * rw &&
-            scene.h < 2 * rh);
-      CHECK(glow[0].w == quality()->bloomSize);
-      CHECK(rw == (int)(width*quality()->renderScale) && rh == (int)(height*quality()->renderScale));
-      checkGL("resize");
-    }
-  puts("PASS all 15 resolution/preset combinations and complete GPU targets");
+  resourceInit();
+  int drawableWidth,drawableHeight;
+  SDL_GL_GetDrawableSize(window,&drawableWidth,&drawableHeight);
+  for(int p=0;p<3;p++)for(int i=0;i<RENDER_SIZE_COUNT;i++) {
+    renderSizeIndex=i;resolution();
+    GLuint texture=scene.tex;setQualityPreset(p);
+    CHECK(scene.tex==texture); /* Presets must not reallocate the scene target. */
+    CHECK(scene.w>=rw && scene.h>=rh && scene.w<2*rw && scene.h<2*rh);
+    CHECK(glow[0].w==quality()->bloomSize);
+    CHECK(rw==renderSizes[i][0] && rh==renderSizes[i][1] && rw*3==rh*4);
+    CHECK(width==drawableWidth && height==drawableHeight);
+    glBindFramebuffer(GL_FRAMEBUFFER,scene.fbo);
+    CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE);
+    CHECK(glGetError()==GL_NO_ERROR);
+  }
+  renderSizeIndex=0;resolution();changeRenderSize(-1);CHECK(renderSizeIndex==0);
+  renderSizeIndex=RENDER_SIZE_COUNT-1;resolution();changeRenderSize(1);
+  CHECK(renderSizeIndex==RENDER_SIZE_COUNT-1);
+  puts("PASS 18 internal resolution/preset combinations, complete GPU targets, fixed drawable and bounded controls");
   SDL_GL_DeleteContext(context);
   SDL_DestroyWindow(window);
   SDL_Quit();
