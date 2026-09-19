@@ -922,6 +922,9 @@ static V3 homeDirection(void) {
  * relative to the active body, as in the existing arcade controller. */
 static void advanceCelestial(void) {
  CelestialFrame old=celestial,next=celestialAt(clockTime,dayOffset,lunarPhaseOffset);
+ /* Paused/still frames must not round-trip body-local coordinates: repeated
+  * floating-point rotations can drift occupants and invalidate view caches. */
+ if(!memcmp(&old,&next,sizeof(old))){sun=celestial.sun;return;}
  int rider=nearMoon(eye),parked=nearMoon(shipPos);
  V3 playerLocal=celestialInverse(&old,add(eye,mul(old.center,-1)));
  V3 shipLocal=celestialInverse(&old,add(shipPos,mul(old.center,-1)));

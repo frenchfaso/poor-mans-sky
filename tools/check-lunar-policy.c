@@ -5,6 +5,14 @@
 #include <assert.h>
 int main(void) {
  SDL_Init(0);mutex=SDL_CreateMutex();cond=SDL_CreateCond();
+ celestial=celestialAt(clockTime,dayOffset,lunarPhaseOffset);
+ eye=moonWorldPoint(v3(0,0,MOON_RADIUS+100));shipPos=eye;
+ heading=norm(v3(.2f,.3f,.7f));shipHeading=heading;flightForward=heading;
+ flightUp=norm(v3(.6f,.1f,.3f));velocity=v3(1,2,3);
+ V3 fixed[]={eye,shipPos,heading,shipHeading,flightForward,flightUp,velocity};
+ for(int i=0;i<1000;i++)advanceCelestial();
+ V3 after[]={eye,shipPos,heading,shipHeading,flightForward,flightUp,velocity};
+ assert(!memcmp(fixed,after,sizeof(fixed)));
  celestial=(CelestialFrame){{600000,0,0},{1,0,0},{0,1,0},{0,0,1},{1,0,0}};sun=v3(1,0,0);
  assert(solarVisibilityAt(v3(RADIUS+100000,200000,0))==1);
  assert(solarVisibilityAt(v3(RADIUS+100000,0,0))==0); /* Moon across the Sun. */
