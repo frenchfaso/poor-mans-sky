@@ -89,6 +89,6 @@ for the CPU fog and texture transition variants.
 Checks actual depth-test occlusion of the third-person ship near either body's
 surface, visibility despite distant near clipping in space, foreground alpha
 blending, lighting based on the final camera, and shadow-cache invalidation for
-roll and boarding state. The ship shares the nearest body's depth projection
+roll, boarding state, and a 24-angle orbit with a fixed shadow footprint. The ship shares the nearest body's depth projection
 near the surface; the reserved foreground range is used only in clear space.
 Clouds are composed after opaque actors. No GPU readback is added to the runtime.

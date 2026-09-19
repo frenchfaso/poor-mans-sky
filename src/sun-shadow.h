@@ -5,7 +5,7 @@
 static Target sunMap;
 static GLuint sunCastP,sunGroundP;
 static int sunShadows=1,sunReady,sunLast=-100,sunUpdates,sunCasterDraws,sunReceiverDraws;
-static V3 sunAnchor,sunRight,sunUp,sunDirection,sunLastEye,sunLastShip,sunLastForward,sunLastUp;
+static V3 sunAnchor,sunRight,sunUp,sunDirection,sunLastFocus,sunLastShip,sunLastForward,sunLastUp;
 static int sunLastFlying=-1;
 static double sunShadowMS;
 static void sunProxy(int shape,V3 pos,V3 size) {
@@ -18,14 +18,17 @@ static void sunProxy(int shape,V3 pos,V3 size) {
   glPopMatrix();sunCasterDraws++;
 }
 static void sunShadowUpdate(void) {
-  float height=dot(norm(cameraEye),sun);
-  if(!sunShadows || height<.12f || sqrtf(dot(cameraEye,cameraEye))-RADIUS-elevation(norm(cameraEye))>100) {sunReady=0;return;}
-  V3 movingEye=add(cameraEye,mul(sunLastEye,-1));
+  /* Orbiting the chase camera must not move the 10-14 m receiver fade
+   * across the ship's shadow, or cross the altitude enable threshold. */
+  V3 focus=flying?eye:cameraEye;
+  float height=dot(norm(focus),sun);
+  if(!sunShadows || height<.12f || sqrtf(dot(focus,focus))-RADIUS-elevation(norm(focus))>100) {sunReady=0;return;}
+  V3 movingFocus=add(focus,mul(sunLastFocus,-1));
   V3 currentShip=flying?eye:shipPos,currentForward=flying?flightForward:shipHeading;
   V3 currentUp=flying?flightUp:bodyUp(shipPos);
   V3 movingShip=add(currentShip,mul(sunLastShip,-1));
   V3 movingSun=add(sun,mul(sunDirection,-1));
-  if(sunReady && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingEye,movingEye)<.09f &&
+  if(sunReady && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingFocus,movingFocus)<.09f &&
      dot(movingShip,movingShip)<.0625f && dot(currentForward,sunLastForward)>.9999f &&
      dot(currentUp,sunLastUp)>.9999f && flying==sunLastFlying) return;
   Uint64 start=SDL_GetPerformanceCounter();
@@ -40,7 +43,7 @@ static void sunShadowUpdate(void) {
   sunDirection=sun;
   sunRight=norm(cross(fabsf(sun.y)<.9f?v3(0,1,0):v3(1,0,0),sun));
   sunUp=cross(sun,sunRight);
-  V3 d=norm(cameraEye);sunAnchor=mul(d,RADIUS+fmaxf(elevation(d),0));
+  V3 d=norm(focus);sunAnchor=mul(d,RADIUS+fmaxf(elevation(d),0));
   /* Snap the orthographic footprint in light space, not to camera orientation. */
   float texel=32.0f/512;
   float x=dot(sunAnchor,sunRight),y=dot(sunAnchor,sunUp);
@@ -95,7 +98,7 @@ static void sunShadowUpdate(void) {
   glBindBuffer(GL_ARRAY_BUFFER,0);glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
   if(wire)glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
   sunReady=1;sunLast=frameNo;sunUpdates++;
-  sunLastEye=cameraEye;sunLastShip=currentShip;sunLastForward=currentForward;sunLastUp=currentUp;sunLastFlying=flying;
+  sunLastFocus=focus;sunLastShip=currentShip;sunLastForward=currentForward;sunLastUp=currentUp;sunLastFlying=flying;
   sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
 }
 static void sunShadowGround(void) {

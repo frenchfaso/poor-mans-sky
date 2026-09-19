@@ -50,7 +50,8 @@ int main(void) {
   /* Isolate roll and boarding-state invalidation with an unchanged camera,
    * ship position/forward vector, sun, and a still-valid four-frame cache. */
   V3 radial=homeDirection();cameraEye=mul(radial,RADIUS+elevation(radial)+5);
-  eye=add(cameraEye,mul(radial,500));shipPos=eye;
+  eye=cameraEye;shipPos=eye;
+  actorInit();foliageTex=actorTex;
   flightForward=norm(cross(radial,v3(0,1,0)));shipHeading=flightForward;flightUp=radial;
   sun=radial;scene=target(64,64,1,0);flying=1;frameNo=0;
   sunShadowUpdate();assert(sunReady && sunUpdates==1);
@@ -59,8 +60,22 @@ int main(void) {
   sunShadowUpdate();assert(sunUpdates==2);
   sunShadowUpdate();assert(sunUpdates==2);
   flying=0;sunShadowUpdate();assert(sunUpdates==3);
+  flying=1;sunShadowUpdate();
+  V3 fixedAnchor=sunAnchor;
+  int updates=sunUpdates;
+  V3 right=norm(cross(flightForward,radial));
+  for(int i=0;i<24;i++) {
+    float a=i*2*PI/24;
+    cameraEye=add(eye,add(mul(radial,4),add(mul(flightForward,14*cosf(a)),mul(right,14*sinf(a)))));
+    sunShadowUpdate();
+    assert(sunReady && sunUpdates==updates);
+    assert(!memcmp(&sunAnchor,&fixedAnchor,sizeof(V3)));
+  }
+  /* A scheduled refresh from a different orbit angle keeps the same footprint. */
+  frameNo+=4;sunShadowUpdate();
+  assert(sunUpdates==updates+1 && !memcmp(&sunAnchor,&fixedAnchor,sizeof(V3)));
   assert(glGetError()==GL_NO_ERROR);
   sunShadowClose();SDL_GL_DeleteContext(context);SDL_DestroyWindow(window);SDL_Quit();
-  puts("PASS ship/world depth, space clipping, foreground blending, camera lighting, shadow roll/state cache");
+  puts("PASS ship/world depth, space clipping, foreground blending, camera lighting, shadow roll/state cache and camera-independent orbit footprint");
   return 0;
 }
