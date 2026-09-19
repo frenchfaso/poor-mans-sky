@@ -2,6 +2,7 @@
 /* Full-scene integration: real F4 events with workers, targets and caches live.
  * Run from bin with --windowed --frames 210 --preload --ram-preload-mib 0.
  * Do not use --still: it deliberately ignores keyboard events. */
+#define _POSIX_C_SOURCE 200809L
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
 static void testSwap(SDL_Window *window);
