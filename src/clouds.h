@@ -22,6 +22,57 @@ static void cloudWeights(V3 delta,V3 axes[3],float weights[3]) {
  }
  for(int i=0;i<3;i++)weights[i]/=fmaxf(sum,1e-6f);
 }
+static const float cloudCorners[8][2]={{-1,-.5},{-.5,-1},{.5,-1},{1,-.5},{1,.5},{.5,1},{-.5,1},{-1,.5}};
+static const int cloudHorizontal[3]={0,0,2},cloudVertical[3]={1,2,1};
+static const float cloudScale[3]={1,.52f,.72f};
+/* Homogeneous camera coordinates: sides are x/y = +/-z. Clip only crossed
+ * planes; most cards need no clipping. Offscreen pixels spend no fill budget. */
+static float cloudPlaneDistance(V3 p,int plane) {
+ switch(plane) {
+  case 0:return p.x+p.z;case 1:return p.z-p.x;
+  case 2:return p.y+p.z;case 3:return p.z-p.y;
+  case 4:return p.z-clipNear;default:return clipFar-p.z;
+ }
+}
+static float cloudCardArea(V3 center,V3 right,V3 up) {
+ V3 polygons[2][16];int count=8,source=0,any=0,all=63;
+ for(int i=0;i<8;i++) {
+  V3 p=add(center,add(mul(right,cloudCorners[i][0]),mul(up,cloudCorners[i][1])));
+  polygons[0][i]=p;int outside=0;
+  for(int plane=0;plane<6;plane++)if(cloudPlaneDistance(p,plane)<0)outside|=1<<plane;
+  any|=outside;all&=outside;
+ }
+ if(all)return 0;
+ for(int plane=0;plane<6;plane++)if(any&(1<<plane)) {
+  V3 *in=polygons[source],*out=polygons[1-source];int written=0;
+  V3 previous=in[count-1];float a=cloudPlaneDistance(previous,plane);
+  for(int i=0;i<count;i++) {
+   V3 current=in[i];float b=cloudPlaneDistance(current,plane);
+   if((a<0)!=(b<0))out[written++]=add(previous,mul(add(current,mul(previous,-1)),a/(a-b)));
+   if(b>=0)out[written++]=current;
+   previous=current;a=b;
+  }
+  if(written<3)return 0;
+  count=written;source=1-source;
+ }
+ V3 *p=polygons[source];float area=0;
+ float lastX=p[count-1].x/p[count-1].z,lastY=p[count-1].y/p[count-1].z;
+ for(int i=0;i<count;i++) {
+  float x=p[i].x/p[i].z,y=p[i].y/p[i].z;
+  area+=lastX*y-x*lastY;lastX=x;lastY=y;
+ }
+ return fabsf(area)*.125f; /* Shoelace area / the four-square-unit viewport. */
+}
+static float cloudProjectedArea(V3 delta,float size,V3 axes[3],float tx,float ty) {
+ V3 center=v3(dot(delta,viewRight)/tx,dot(delta,viewUp)/ty,dot(delta,viewForward)),projected[3];
+ for(int i=0;i<3;i++) {
+  V3 axis=mul(axes[i],size*cloudScale[i]);
+  projected[i]=v3(dot(axis,viewRight)/tx,dot(axis,viewUp)/ty,dot(axis,viewForward));
+ }
+ float area=0;
+ for(int face=0;face<3;face++)area+=cloudCardArea(center,projected[cloudHorizontal[face]],projected[cloudVertical[face]]);
+ return area;
+}
 static void cloudPrepareCatalog(void) {
  if(cloudCatalogReady && cloudSeed==worldSeed)return;
  for(int i=0;i<768;i++) {
@@ -60,12 +111,12 @@ static void cloudsDraw(void) {
  const float ty=.5773503f,tx=ty*width/height;
  for(int i=0;i<2304;i++) {
   CloudPuff q=cloudCatalog[i];V3 delta=add(q.p,mul(cameraEye,-1));
-  float z=dot(delta,viewForward),distance=sqrtf(dot(delta,delta));
+  float z=dot(delta,viewForward);
   float bound=q.size*1.08f; /* Circumscribe the octagon at any screen roll. */
-  if(dot(norm(q.p),cameraEye)<RADIUS-10000 || z < -bound ||
+  if(z+bound<clipNear || z-bound>clipFar ||
      fabsf(dot(delta,viewRight))>z*tx+bound*sqrtf(1+tx*tx) ||
-     fabsf(dot(delta,viewUp))>z*ty+bound*sqrtf(1+ty*ty))continue;
-  q.dist=distance*distance;
+     fabsf(dot(delta,viewUp))>z*ty+bound*sqrtf(1+ty*ty) || behindPlanet(q.p,bound))continue;
+  q.dist=dot(delta,delta);float distance=sqrtf(q.dist);
   float fade=clampf((distance/q.size-.12f)/.68f,0,1);q.alpha=fade*fade*(3-2*fade);
   if(q.alpha<.01f)continue;
   if(count==limit && q.dist>=puffs[limit-1].dist)continue;
@@ -76,19 +127,18 @@ static void cloudsDraw(void) {
  /* Budget projected area, not just sprite count. Taper the final puff so
   * approaching a cloud does not cause an abrupt density boundary. */
  float budget=quality()->cloudArea;
+ V3 puffAxes[96][3];float puffWeights[96][3];
  for(int i=0;i<count;i++) {
-  V3 delta=add(puffs[i].p,mul(cameraEye,-1));float z=fmaxf(puffs[i].size*.25f,dot(delta,viewForward));
-  V3 axes[3];float weights[3];cloudAxes(puffs[i].p,axes);cloudWeights(delta,axes,weights);
-  float footprint=0;
-  const float areaScale[3]={.52f,.72f,.52f*.72f};
-  for(int k=0;k<3;k++)if(weights[k]>.01f)footprint+=areaScale[k]*sqrtf(weights[k]);
-  float area=fminf(3,puffs[i].size*puffs[i].size*footprint*.875f/(z*z*tx*ty));
-  float weight=clampf(budget/fmaxf(area,.001f),0,1);puffs[i].alpha*=weight;
+  if(budget<=0){for(int j=i;j<count;j++)puffs[j].alpha=0;break;}
+  V3 delta=add(puffs[i].p,mul(cameraEye,-1));
+  cloudAxes(puffs[i].p,puffAxes[i]);cloudWeights(delta,puffAxes[i],puffWeights[i]);
+  float area=cloudProjectedArea(delta,puffs[i].size,puffAxes[i],tx,ty);
+  if(area<=1e-6f){puffs[i].alpha=0;continue;}
+  float weight=clampf(budget/area,0,1);puffs[i].alpha*=weight;
   budget=fmaxf(0,budget-area);if(weight>0)cloudScreenArea+=area;
  }
  CloudVertex vertices[96*3*18];int n=0;
  /* The octagon encloses the alpha footprint and removes transparent corners. */
- static const float corners[8][2]={{-1,-.5},{-.5,-1},{.5,-1},{1,-.5},{1,.5},{.5,1},{-.5,1},{-1,.5}};
  for(int i=count-1;i>=0;i--) {
   CloudPuff p=puffs[i];if(p.alpha<.01f)continue;cloudDrawCount++;
   V3 d=norm(p.p);float solar=dot(d,sun),day=clampf((solar+.09f)/.32f,0,1);day=day*day*(3-2*day);
@@ -97,18 +147,15 @@ static void cloudsDraw(void) {
   float forward=fmaxf(0,dot(norm(add(p.p,mul(cameraEye,-1))),sun));forward*=forward;forward*=forward;
   V3 color=add(mul(v3(.19f,.24f,.34f),.04f+.20f*day),mul(tint,day*(.80f+.16f*forward)));
   int variant=(int)(fabsf(p.p.x*.013f)+fabsf(p.p.z*.007f))%4;
-  V3 axes[3],delta=add(p.p,mul(cameraEye,-1));float weights[3];
-  cloudAxes(p.p,axes);cloudWeights(delta,axes,weights);
+  V3 *axes=puffAxes[i],delta=add(p.p,mul(cameraEye,-1));float *weights=puffWeights[i];
   /* Front XY, top XZ, side ZY: atlas projections of the same density field. */
-  const int horizontal[3]={0,0,2},vertical[3]={1,2,1};
-  const float scale[3]={1,.52f,.72f};
   for(int face=0;face<3;face++) {
    if(weights[face]<=.01f)continue;
-   V3 right=mul(axes[horizontal[face]],p.size*scale[horizontal[face]]);
-   V3 up=mul(axes[vertical[face]],p.size*scale[vertical[face]]);
+   V3 right=mul(axes[cloudHorizontal[face]],p.size*cloudScale[cloudHorizontal[face]]);
+   V3 up=mul(axes[cloudVertical[face]],p.size*cloudScale[cloudVertical[face]]);
    int tile=variant*3+face;
    for(int triangle=1;triangle<7;triangle++)for(int k=0;k<3;k++) {
-    int index=k==0?0:k==1?triangle:triangle+1;float x=corners[index][0],y=corners[index][1];
+    int index=k==0?0:k==1?triangle:triangle+1;float x=cloudCorners[index][0],y=cloudCorners[index][1];
     V3 v=add(delta,add(mul(right,x),mul(up,y)));
     vertices[n++]=(CloudVertex){v,((tile%4)*64+.5f+(x*.5f+.5f)*63)/256.f,((tile/4)*64+.5f+(y*.5f+.5f)*63)/256.f,color,p.alpha*weights[face]};
    }

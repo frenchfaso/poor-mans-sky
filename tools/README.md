@@ -97,8 +97,12 @@ Clouds are composed after opaque actors. No GPU readback is added to the runtime
 Reads the cloud vertex buffer across 24 roll angles: world-space geometry,
 UVs, color and opacity must remain identical, including after compound yaw/pitch
 loops. Also checks the three orthogonal projection weights. Planet-fixed cards
-blend according to the camera position, with no orientation history. One draw
-and one texture sample per fragment; projected overlap retains its area budget.
+blend according to the camera position, with no orientation history. Also checks
+that a near offscreen puff cannot hide a distant cloud during small walk/fly
+camera turns, plus visibility beyond the old high-altitude horizon cutoff.
+CPU checks cover clipped octagon area, near/far planes and monotonic edge entry.
+One draw and one texture sample per fragment; the area budget counts only the
+part of each card inside the actual view. Card axes/weights are reused for drawing.
 
 ## View-directed streaming (polygonal engine)
 

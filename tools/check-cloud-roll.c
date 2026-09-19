@@ -11,6 +11,18 @@ static int readCloud(CloudVertex *vertices) {
  glGetBufferSubData(GL_ARRAY_BUFFER,0,bytes,vertices);return bytes;
 }
 int main(void) {
+ clipNear=1;clipFar=100;
+ assert(fabsf(cloudCardArea(v3(0,0,10),v3(5,0,0),v3(0,5,0))-.21875f)<1e-6f);
+ assert(cloudCardArea(v3(30,0,10),v3(5,0,0),v3(0,5,0))==0);
+ assert(cloudCardArea(v3(0,0,-10),v3(5,0,0),v3(0,5,0))==0);
+ assert(cloudCardArea(v3(0,0,110),v3(5,0,0),v3(0,5,0))==0);
+ float nearArea=cloudCardArea(v3(0,0,1),v3(2,0,2),v3(0,2,0));
+ assert(isfinite(nearArea) && nearArea>0 && nearArea<=1.00001f);
+ float previous=1;
+ for(int i=0;i<=200;i++) {
+  float area=cloudCardArea(v3(i*.1f,0,10),v3(5,0,0),v3(0,5,0));
+  assert(area<=previous+1e-6f && area>=0);previous=area;
+ }
  V3 axes[3];cloudAxes(v3(1300,2700,RADIUS),axes);
  for(int i=0;i<3;i++)for(int j=0;j<3;j++)assert(fabsf(dot(axes[i],axes[j])-(i==j))<1e-5f);
  for(int i=0;i<3;i++)for(int sign=-1;sign<=1;sign+=2) {
@@ -44,8 +56,32 @@ int main(void) {
   cloudsDraw();assert(cloudDrawCount==1);int bytes=readCloud(actual);
   assert(bytes==referenceBytes && !memcmp(reference,actual,bytes));
  }
+ /* A nearby puff just outside the image must not spend the distant cloud's
+  * entire budget when its conservative bound enters the frustum. */
+ CloudVertex crowded[96*54];
+ for(int fly=0;fly<2;fly++) {
+  flying=fly;cameraEye=v3(0,0,RADIUS+(fly?5000:100));
+  for(int i=0;i<2304;i++)cloudCatalog[i]=(CloudPuff){add(cameraEye,v3(0,-10000,0)),100,0,1};
+  cloudCatalog[0]=(CloudPuff){add(cameraEye,v3(3070,1000,200)),2000,0,1};
+  cloudCatalog[1]=(CloudPuff){add(cameraEye,v3(0,10000,3000)),1000,0,1};
+  for(int step=-20;step<=20;step++) {
+   float yaw=step*.001f;viewForward=v3(sinf(yaw),cosf(yaw),0);
+   viewRight=v3(cosf(yaw),-sinf(yaw),0);viewUp=v3(0,0,1);camera();cloudsDraw();
+   GLint bytes=0;glBindBuffer(GL_ARRAY_BUFFER,cloudVbo);glGetBufferParameteriv(GL_ARRAY_BUFFER,GL_BUFFER_SIZE,&bytes);
+   assert(bytes>=0 && bytes<=(int)sizeof(crowded));glGetBufferSubData(GL_ARRAY_BUFFER,0,bytes,crowded);
+   float farAlpha=0;for(int i=0;i<bytes/(int)sizeof(*crowded);i++)if(crowded[i].p.y>5000)farAlpha+=crowded[i].alpha;
+   assert(farAlpha>10); /* Same distant puff remains fully represented. */
+  }
+ }
+ /* At altitude the geometric horizon includes both observer and cloud height. */
+ cameraEye=v3(0,0,RADIUS+30000);clipFar=500000;
+ V3 horizonPuff=mul(v3(0,sinf(.65f),cosf(.65f)),RADIUS+5000);
+ viewForward=norm(add(horizonPuff,mul(cameraEye,-1)));
+ viewRight=norm(cross(viewForward,v3(0,0,1)));viewUp=cross(viewRight,viewForward);
+ for(int i=0;i<2304;i++)cloudCatalog[i]=(CloudPuff){add(cameraEye,mul(viewForward,-10000)),100,0,1};
+ cloudCatalog[0]=(CloudPuff){horizonPuff,2400,0,1};camera();cloudsDraw();assert(cloudDrawCount==1);
  assert(glGetError()==GL_NO_ERROR);
  cloudsClose();SDL_GL_DeleteContext(context);SDL_DestroyWindow(window);SDL_Quit();
- puts("PASS cloud cards: fixed geometry/UV/alpha through roll and compound camera loops; three orthogonal projection weights");
+ puts("PASS fixed cloud cards/weights, roll and camera loops, offscreen-budget continuity in walk/fly and high-altitude horizon");
  return 0;
 }
