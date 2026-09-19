@@ -2,15 +2,31 @@
 /* Both worlds share disk packs, allocation policy, worker and VRAM budget. */
 #include "moon-mesh.h"
 #define MOON_SLOTS 256
- typedef struct {int face,level,x,y,stamp,valid;V3 center;GLuint vbo;} MoonPatch;
+typedef struct {
+ int face,level,x,y,stamp,valid,visible,band;
+ V3 center,boundCenter,boundHalf,worldCenter,worldHalf;float boundRadius;GLuint vbo;
+ GLuint query;unsigned queryEpoch,testedEpoch;int queryPending,hidden;
+} MoonPatch;
 static MoonPatch moonPatches[MOON_SLOTS];
 static GLuint moonP,moonAirP,moonDrawP,moonRock,homeGlobe;
 static int moonDraws,moonBuilds,moonPlanning,moonBaking,moonUploads,moonRequestOnly;
-static float moonLodScale=.9f;
+static float moonLodScale=.9f,moonLastNear;
 static MoonPatch *moonSelected[MOON_SLOTS];
 static int moonSelectedCount;
 #include "moon-stream.h"
 static void moonRememberGrid(int slot,const MoonVertex *v);
+static void moonMeasureBounds(MoonPatch *p,const MoonVertex *v) {
+ V3 lo=v3(1e30f,1e30f,1e30f),hi=mul(lo,-1);
+ for(int i=0;i<MOON_VERTS;i++)for(int k=0;k<2;k++) {
+  V3 q=k?v[i].coarse:v[i].p;
+  lo=v3(fminf(lo.x,q.x),fminf(lo.y,q.y),fminf(lo.z,q.z));
+  hi=v3(fmaxf(hi.x,q.x),fmaxf(hi.y,q.y),fmaxf(hi.z,q.z));
+ }
+ p->boundCenter=add(p->center,mul(add(lo,hi),.5f));
+ p->boundHalf=add(mul(add(hi,mul(lo,-1)),.5f),v3(1,1,1));
+ p->boundRadius=sqrtf(dot(p->boundHalf,p->boundHalf));
+ p->testedEpoch=0;p->hidden=0;
+}
 static MoonPatch *moonPatch(int face,int level,int x,int y) {
  int slot=-1;
  for(int i=0;i<MOON_SLOTS;i++) {
@@ -28,6 +44,7 @@ static MoonPatch *moonPatch(int face,int level,int x,int y) {
  SDL_UnlockMutex(mutex);
  if(!p->vbo){if(!vramReserve(MOON_VERTS*sizeof(MoonVertex))){SDL_LockMutex(mutex);r->pins--;SDL_UnlockMutex(mutex);return NULL;}glGenBuffers(1,&p->vbo);}
  glBindBuffer(GL_ARRAY_BUFFER,p->vbo);glBufferData(GL_ARRAY_BUFFER,MOON_VERTS*sizeof(MoonVertex),vertices,GL_STATIC_DRAW);
+ p->center=center;moonMeasureBounds(p,vertices);
  moonRememberGrid(slot,vertices);
  SDL_LockMutex(mutex);r->pins--;SDL_UnlockMutex(mutex);
  moonUploads++;p->center=center;
@@ -35,7 +52,7 @@ static MoonPatch *moonPatch(int face,int level,int x,int y) {
 }
 /* Collect a disjoint cover before drawing: unfinished children retain their
  * parent, never a partly refined mesh with holes or overlapping surfaces. */
-static int moonNode(int face,int level,int x,int y) {
+static int moonLegacyNode(int face,int level,int x,int y) {
  float span=2.f/(1<<level);V3 d=direction(face,-1+(x+.5f)*span,-1+(y+.5f)*span);
  V3 localEye=moonLocalPoint(cameraEye),c=mul(d,MOON_RADIUS+moonHeight(d));
  float extent=span*MOON_RADIUS*1.6f,dist=sqrtf(dot(add(localEye,mul(c,-1)),add(localEye,mul(c,-1))));
@@ -50,7 +67,7 @@ static int moonNode(int face,int level,int x,int y) {
   for(int k=0;k<4;k++){V3 q=direction(face,-1+(x*2+(k&1)+.5f)*span*.5f,-1+(y*2+(k>>1)+.5f)*span*.5f);distances[k]=-dot(q,localEye);}
   for(int i=1;i<4;i++){int k=order[i],j=i;while(j>0 && distances[order[j-1]]>distances[k]){order[j]=order[j-1];j--;}order[j]=k;}
   int before=moonSelectedCount,complete=1;
-  for(int i=0;i<4;i++){int k=order[i];if(!moonNode(face,level+1,x*2+(k&1),y*2+(k>>1)))complete=0;}
+  for(int i=0;i<4;i++){int k=order[i];if(!moonLegacyNode(face,level+1,x*2+(k&1),y*2+(k>>1)))complete=0;}
   if(complete || moonPlanning || moonBaking || moonRequestOnly)return 1;
   moonSelectedCount=before; /* Roll back children before selecting their parent. */
  }
@@ -65,7 +82,7 @@ static int moonNode(int face,int level,int x,int y) {
  MoonPatch *p=moonPatch(face,level,x,y);if(!p || moonSelectedCount==MOON_SLOTS)return 0;
  moonSelected[moonSelectedCount++]=p;return 1;
 }
-static float moonMorphFactor(const MoonPatch *p) {
+static float moonLegacyMorphFactor(const MoonPatch *p) {
  if(!p->level)return 1;
  float span=2.f/(1<<(p->level-1));V3 c=moonPoint(p->face,-1+(p->x/2+.5f)*span,-1+(p->y/2+.5f)*span);
  V3 delta=add(c,mul(moonLocalPoint(cameraEye),-1));
@@ -73,7 +90,9 @@ static float moonMorphFactor(const MoonPatch *p) {
  float t=clampf((threshold-sqrtf(dot(delta,delta)))/fmaxf(1,threshold*.25f),0,1);
  return t*t*(3-2*t);
 }
+#include "moon-lod.h"
 #include "moon-seams.h"
+#include "moon-visibility.h"
 static void moonDrawPatch(const MoonPatch *p) {
  u1(moonDrawP,"morph",1);
  V3 radial=norm(p->center),tu=p->face==0?v3(0,0,-1):p->face==1?v3(0,0,1):p->face==5?v3(-1,0,0):v3(1,0,0);
@@ -115,7 +134,8 @@ static void moonInit(void) {
 }
 #include "moon-atmosphere.h"
 static void moonDraw(void) {
- SDL_LockMutex(mutex);streamPriorityEye=eye;streamPriorityFrame=frameNo;SDL_UnlockMutex(mutex);
+ moonLastNear=clipNear;moonPrepareView();
+ SDL_LockMutex(mutex);moonRefreshPriorities();SDL_UnlockMutex(mutex);
  moonInit();
  moonDraws=0;moonUploads=0;moonDrawP=moonAtmosphereNeeded()?moonAirP:moonP;glUseProgram(moonDrawP);glColor3f(.48,.49,.51);tex(moonDrawP,"rockTex",0,moonRock);u3(moonDrawP,"sun",moonLocalVector(sun));
  u3(moonDrawP,"planetDir",moonLocalVector(mul(norm(moonCenter()),-1)));u1(moonDrawP,"planetshine",lunarPlanetshine());
@@ -137,11 +157,15 @@ static void moonDraw(void) {
  moonPlanning=1;moonLodScale=.9f;
  do {moonDraws=0;for(int i=0;i<6;i++)moonNode(faces[i],0,0,0);if(moonDraws<=patchBudget)break;moonLodScale*=.85f;}while(moonLodScale>.1f);
  moonPlanning=0;moonDraws=0;moonSelectedCount=0;
- /* Prefetch the complete radial cover, including behind the camera. */
+ /* Retain the near bubble; distant refinement follows the expanded cone. */
  moonRequestOnly=1;for(int i=0;i<6;i++)moonNode(faces[i],0,0,0);moonRequestOnly=0;
  for(int i=0;i<6;i++)moonNode(faces[i],0,0,0);
  moonStitch();
- for(int i=0;i<moonSelectedCount;i++)moonDrawPatch(moonSelected[i]);
+ moonVisibilityPrepare();
+ for(int i=0;i<moonSelectedCount;i++)if(moonSelected[i]->visible)moonDrawPatch(moonSelected[i]);
+ moonVisibilityIssue();
  glDisableClientState(GL_VERTEX_ARRAY);glDisableClientState(GL_NORMAL_ARRAY);glDisableClientState(GL_TEXTURE_COORD_ARRAY);glBindBuffer(GL_ARRAY_BUFFER,0);glEnable(GL_CULL_FACE);
 }
-static void moonClose(void){moonClearRAM();for(int i=0;i<MOON_SLOTS;i++)glDeleteBuffers(1,&moonPatches[i].vbo);glDeleteBuffers(1,&homeGlobe);glDeleteTextures(1,&moonRock);glDeleteProgram(moonP);glDeleteProgram(moonAirP);}
+static void moonClose(void){moonClearRAM();for(int i=0;i<MOON_SLOTS;i++){glDeleteBuffers(1,&moonPatches[i].vbo);glDeleteQueries(1,&moonPatches[i].query);}glDeleteBuffers(1,&homeGlobe);glDeleteTextures(1,&moonRock);glDeleteProgram(moonP);glDeleteProgram(moonAirP);}
+
+#include "moon-shadow.h"

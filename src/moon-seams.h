@@ -74,6 +74,7 @@ static void moonStitch(void) {
    for(int k=2;k<4;k++){q[k].p=add(q[k].p,mul(norm(add(p->center,q[k].p)),-depth));q[k].coarse=q[k].p;}
    int ids[6]={0,1,2,0,2,3};for(int k=0;k<6;k++)out[n++]=q[ids[k]];
   }
+  moonMeasureBounds(p,out);
   glBindBuffer(GL_ARRAY_BUFFER,p->vbo);glBufferSubData(GL_ARRAY_BUFFER,0,sizeof(out),out);moonUploadedHash[slot]=hash;moonSeamUploads++;
  }
 }

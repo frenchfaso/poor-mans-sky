@@ -142,3 +142,23 @@ Do not pass `--still` (it ignores keys) or a non-default startup preset.
 `check-stream-view.c` also checks distance limits/hysteresis for all three presets
 and both movement modes; `check-flight-rendering.c` checks shadow map resizing
 and the matching receiver texel step.
+
+## Lunar rendering and lighting
+
+`check-lunar-policy.c` is a CPU check (compile like `check-stream-view.c`). It
+checks planet/Moon solar occultation, penumbra, lunar bubble/cone priorities,
+all presets in walk/fly, cached planning and coarse coverage in a full queue.
+
+`check-lunar-rendering.c` is an OpenGL integration check:
+
+```sh
+./check-lunar-rendering --moon --moon-phase 0.68 --still --frames 360 --ram-preload-mib 0 --no-vsync
+```
+
+It checks disjoint lunar coverage with live workers, rapid turns, all presets,
+ship shadow receivers and an invariant shadow footprint while orbiting the
+flight camera. Use `--windowed` on Mac; run from `bin/`. Lunar detail uses the
+same streaming bubble, expanded cone and distance bands as planetary terrain.
+Occlusion results are asynchronous and invalidated by camera/body/mesh changes.
+The ship's direct light uses analytic planet/Moon occultation; emissive and
+ambient light remain independent. Local ship shadows fade above 100 m AGL.

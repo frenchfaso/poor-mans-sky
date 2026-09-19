@@ -4,6 +4,9 @@
 typedef struct MoonRAM {
  int face,level,x,y,stamp,state,pins;
  V3 center;MoonVertex *vertices;struct MoonRAM *next;
+ /* Immutable local metadata plus main-thread view cache; no payload changes. */
+ V3 planCenter,planRadial;float planSize,planRadius,distance,distance2,priority;
+ unsigned viewRevision,orderRevision;int band,visible,split,order[4];
 } MoonRAM;
 static MoonRAM *moonRAM[4096],*moonQueue[512];
 static int moonQueueCount;
@@ -11,29 +14,52 @@ static unsigned moonHash(int face,int level,int x,int y) {
  return ((unsigned)face*73856093u ^ (unsigned)level*19349663u ^
          (unsigned)x*83492791u ^ (unsigned)y*2654435761u)&4095u;
 }
-static MoonRAM *moonRequest(int face,int level,int x,int y) {
+/* All lookup/queue mutations hold the shared mutex. Planning records survive
+ * payload eviction, avoiding procedural height evaluations in every pass. */
+static MoonRAM *moonRecord(int face,int level,int x,int y,int create) {
  unsigned h=moonHash(face,level,x,y);MoonRAM *r=moonRAM[h];
  while(r && !(r->face==face && r->level==level && r->x==x && r->y==y))r=r->next;
- if(!r) {
-  if(moonQueueCount==512)return NULL;
+ if(!r && create) {
   r=calloc(1,sizeof(*r));if(!r)return NULL;
-  r->face=face;r->level=level;r->x=x;r->y=y;r->next=moonRAM[h];moonRAM[h]=r;
+  r->face=face;r->level=level;r->x=x;r->y=y;r->band=-1;
+  float span=2.f/(1<<level);
+  r->planRadial=direction(face,-1+(x+.5f)*span,-1+(y+.5f)*span);
+  r->planCenter=mul(r->planRadial,MOON_RADIUS+moonHeight(r->planRadial));
+  r->planSize=span*MOON_RADIUS;r->planRadius=r->planSize*1.6f+32;
+  r->next=moonRAM[h];moonRAM[h]=r;
  }
+ return r;
+}
+static float moonRequestPriority(const MoonRAM *r) {
+ V3 delta=add(moonWorldPoint(r->planCenter),mul(streamPriorityEye,-1));
+ float distance=fmaxf(0,sqrtf(dot(delta,delta))-r->planRadius);
+ if(!streamViewReady)return streamDistancePriority(distance,r->level,0);
+ if(r->level<=2)return -65536+r->level*8192+distance*.001f;
+ int band=streamBandDelta(delta,dot(delta,delta),r->planRadius,-1);
+ return band*8192+fminf(distance/streamBubble*256,4095)+r->level*.01f;
+}
+static void moonRefreshPriorities(void) {
+ for(int i=0;i<moonQueueCount;i++)moonQueue[i]->priority=moonRequestPriority(moonQueue[i]);
+}
+static MoonRAM *moonRequest(int face,int level,int x,int y) {
+ MoonRAM *r=moonRecord(face,level,x,y,1);if(!r)return NULL;
  r->stamp=frameNo;
- if(r->state==0 && moonQueueCount<512){r->state=1;moonQueue[moonQueueCount++]=r;SDL_CondSignal(cond);}
+ if(r->state==0) {
+  r->priority=moonRequestPriority(r);
+  int slot=moonQueueCount;
+  if(slot==512) {
+   int worst=0;for(int i=1;i<512;i++)if(moonQueue[i]->priority>moonQueue[worst]->priority)worst=i;
+   if(r->priority>=moonQueue[worst]->priority)return r;
+   moonQueue[worst]->state=0;slot=worst;
+  } else moonQueueCount++;
+  r->state=1;moonQueue[slot]=r;SDL_CondSignal(cond);
+ }
  return r;
 }
 static int moonWorkPending(void){return moonQueueCount!=0;}
-static float moonRequestPriority(const MoonRAM *r) {
- float span=2.f/(1<<r->level);
- V3 center=moonWorldPoint(mul(direction(r->face,-1+(r->x+.5f)*span,-1+(r->y+.5f)*span),MOON_RADIUS));
- V3 delta=add(streamPriorityEye,mul(center,-1));
- float distance=fmaxf(0,sqrtf(dot(delta,delta))-span*MOON_RADIUS*1.6f);
- return streamDistancePriority(distance,r->level,0);
-}
 static void moonStreamWork(void) {
- int best=0;float score=moonRequestPriority(moonQueue[0]);
- for(int i=1;i<moonQueueCount;i++){float p=moonRequestPriority(moonQueue[i]);if(p<score){best=i;score=p;}}
+ int best=0;float score=moonQueue[0]->priority;
+ for(int i=1;i<moonQueueCount;i++){float p=moonQueue[i]->priority;if(p<score){best=i;score=p;}}
  MoonRAM *r=moonQueue[best];moonQueue[best]=moonQueue[--moonQueueCount];
  if(r->level>0 && r->stamp<frameNo-90){r->state=0;return;}
  r->state=2;SDL_UnlockMutex(mutex);

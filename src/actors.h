@@ -175,7 +175,8 @@ static void drawActors(void) {
   u3(actorP, "ambientLight", ambientLight);
   V3 radialAmbient=bodyUp(eye);
   u3(actorP,"ambientUp",v3(dot(radialAmbient,r),dot(radialAmbient,u),-dot(radialAmbient,f)));
-  u3(actorP, "sunLight", sunLight);
+  V3 lightPosition=flying?add(eye,mul(bodyUp(eye),-1.3f)):shipPos;
+  u3(actorP, "sunLight", directSunlightAt(lightPosition));
   u1(actorP, "exposure", sceneExposure);
   u3(actorP, "fogColor", fogColor);
   tex(actorP, "materialTex", 0, actorTex);

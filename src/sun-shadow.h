@@ -6,7 +6,8 @@ static Target sunMap;
 static GLuint sunCastP,sunGroundP;
 static int sunShadows=1,sunReady,sunLast=-100,sunUpdates,sunCasterDraws,sunReceiverDraws;
 static V3 sunAnchor,sunRight,sunUp,sunDirection,sunLastFocus,sunLastShip,sunLastForward,sunLastUp;
-static int sunLastFlying=-1;
+static int sunLastFlying=-1,sunBodyMoon;
+static float sunStrength;
 static double sunShadowMS;
 static void sunProxy(int shape,V3 pos,V3 size) {
   glPushMatrix();glTranslatef(pos.x,pos.y,pos.z);glScalef(size.x,size.y,size.z);
@@ -21,8 +22,12 @@ static void sunShadowUpdate(void) {
   /* Orbiting the chase camera must not move the 10-14 m receiver fade
    * across the ship's shadow, or cross the altitude enable threshold. */
   V3 focus=flying?eye:cameraEye;
-  float height=dot(norm(focus),sun);
-  if(!sunShadows || height<.12f || sqrtf(dot(focus,focus))-RADIUS-elevation(norm(focus))>100) {sunReady=0;return;}
+  int onMoon=nearMoon(focus);
+  V3 radial=bodyUp(focus);
+  float height=dot(radial,sun),surface=bodyHeight(focus);
+  float visibility=solarVisibilityAt(focus);
+  if(!sunShadows || height<.12f || visibility<=0 || bodyAltitude(focus)-surface>100) {sunReady=0;return;}
+  sunStrength=(onMoon?.75f:.38f)*clampf((height-.12f)/.18f,0,1)*visibility;
   V3 movingFocus=add(focus,mul(sunLastFocus,-1));
   V3 currentShip=flying?eye:shipPos,currentForward=flying?flightForward:shipHeading;
   V3 currentUp=flying?flightUp:bodyUp(shipPos);
@@ -30,7 +35,7 @@ static void sunShadowUpdate(void) {
   V3 movingSun=add(sun,mul(sunDirection,-1));
   if(sunReady && sunMap.w==quality()->shadowSize && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingFocus,movingFocus)<.09f &&
      dot(movingShip,movingShip)<.0625f && dot(currentForward,sunLastForward)>.9999f &&
-     dot(currentUp,sunLastUp)>.9999f && flying==sunLastFlying) return;
+     dot(currentUp,sunLastUp)>.9999f && flying==sunLastFlying && onMoon==sunBodyMoon) return;
   Uint64 start=SDL_GetPerformanceCounter();
   if(sunMap.w!=quality()->shadowSize) {
     glDeleteTextures(1,&sunMap.tex);glDeleteFramebuffers(1,&sunMap.fbo);
@@ -45,7 +50,8 @@ static void sunShadowUpdate(void) {
   sunDirection=sun;
   sunRight=norm(cross(fabsf(sun.y)<.9f?v3(0,1,0):v3(1,0,0),sun));
   sunUp=cross(sun,sunRight);
-  V3 d=norm(focus);sunAnchor=mul(d,RADIUS+fmaxf(elevation(d),0));
+  sunBodyMoon=onMoon;
+  sunAnchor=add(bodyCenter(focus),mul(radial,bodyRadius(focus)+surface));
   /* Snap the orthographic footprint in light space, not to camera orientation. */
   float texel=32.0f/sunMap.w;
   float x=dot(sunAnchor,sunRight),y=dot(sunAnchor,sunUp);
@@ -64,7 +70,7 @@ static void sunShadowUpdate(void) {
   glEnableClientState(GL_VERTEX_ARRAY);glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   glUseProgram(sunCastP);tex(sunCastP,"foliageTex",0,foliageTex);u1(sunCastP,"cutoff",.4f);
   sunCasterDraws=0;
-  for(int i=0;i<natureUsed;i++) {
+  for(int i=0;!onMoon && i<natureUsed;i++) {
     NatureCell *c=&nature[i];if(!c->vbo || !c->solid || c->wanted<natureFrame-1)continue;
     V3 delta=add(c->boundCenter,mul(sunAnchor,-1));
     if(sqrtf(dot(delta,delta))-sqrtf(dot(c->boundHalf,c->boundHalf))>80)continue;
@@ -104,12 +110,12 @@ static void sunShadowUpdate(void) {
   sunShadowMS+=(SDL_GetPerformanceCounter()-start)*1000.0/SDL_GetPerformanceFrequency();
 }
 static void sunShadowGround(void) {
-  sunReceiverDraws=0;if(!sunReady || wire)return;
+  sunReceiverDraws=0;if(!sunReady || sunBodyMoon || wire)return;
   Uint64 start=SDL_GetPerformanceCounter();
   glUseProgram(sunGroundP);tex(sunGroundP,"shadowTex",0,sunMap.tex);
   u1(sunGroundP,"shadowTexel",1.0f/sunMap.w);
   u3(sunGroundP,"lightRight",sunRight);u3(sunGroundP,"lightUp",sunUp);u3(sunGroundP,"lightDir",sunDirection);
-  u1(sunGroundP,"strength",.38f*clampf((dot(norm(cameraEye),sun)-.12f)/.18f,0,1));
+  u1(sunGroundP,"strength",sunStrength);
   glEnable(GL_BLEND);glBlendFunc(GL_ZERO,GL_SRC_COLOR);glDepthMask(GL_FALSE);glDepthFunc(GL_LEQUAL);
   glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-1,-1);
   for(int i=0;i<selectedCount;i++) {

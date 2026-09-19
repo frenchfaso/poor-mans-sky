@@ -156,6 +156,7 @@ static V3 direction(int face, float u, float v) {
   }
 }
 #include "moon-field.h"
+#include "solar-visibility.h"
 #include "space-view.h"
 static V3 surfaceNormal(V3 d) {
   if (geological && geology && geologySeed == worldSeed)
@@ -1453,7 +1454,7 @@ static void drawScene(void) {
   if(!nearMoon(eye))contactShadow(1, flying ? eye : shipPos, 4.8f);
   drawSky();
   gpuCheckpoint("moon");
-  clipNear=moonNear;clipFar=moonFar;glDepthRange(moonLo,moonHi);camera();moonDraw();
+  clipNear=moonNear;clipFar=moonFar;glDepthRange(moonLo,moonHi);camera();moonDraw();moonShadowGround();
   if(moonCloser)actorCamera(moonNear,moonFar,moonLo,moonHi);
   else actorCamera(planetNear,planetFar,planetLo,planetHi);
   drawActors();profileMark(5);
@@ -2112,7 +2113,9 @@ int main(int argc, char **argv) {
     if (taking || (frames && frameNo == frames - 1)) {
       if (taking)
         screenshot(capture ? capture : "screenshots/poor-mans-sky.ppm");
-      printf("MOON patches=%d generated=%d near_clip=%.1f\n",moonDraws,moonBuilds,clipNear);
+      printf("MOON patches=%d generated=%d near_clip=%.1f\n",moonDraws,moonBuilds,moonLastNear);
+      int moonBands[6]={0};for(int i=0;i<moonSelectedCount;i++)moonBands[moonSelected[i]->band]++;
+      printf("MOON_STREAM selected=%d bands=%d,%d,%d,%d,%d,%d evaluations=%d hidden=%d queries=%d\n",moonSelectedCount,moonBands[0],moonBands[1],moonBands[2],moonBands[3],moonBands[4],moonBands[5],moonPlanEvaluations,moonHidden,moonQueryIssued);
       printf("CLOUDS enabled=%d sprites=%d screen_area=%.2f OCCLUSION_AUTO active=%d cooldown=%d\n",cloudsEnabled,cloudDrawCount,cloudScreenArea,occlusionActive,occlusionCooldown);
       printf("CPU_FOG patches=%d exact_gpu=%d max_error=0.003\n", cpuFogPatches,
              gpuFogPatches);
