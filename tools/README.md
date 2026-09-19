@@ -27,7 +27,7 @@ il riordinamento dei tasselli e la ricostruzione dopo un cambio LOD.
 
 `check-index.c`: confronta le 225 celle indicizzate con il generatore float, incluse le tolleranze di quantizzazione.
 
-`check-render-targets.c`: dieci combinazioni dimensione/qualità, FBO e dimensioni drawable. I cambi fullscreen reali vanno verificati separatamente sull’hardware destinatario; `--still` ignora gli eventi di input, quindi non usarlo per i test dei tasti.
+`check-render-targets.c`: quindici combinazioni dimensione/qualità, FBO e dimensioni drawable. I cambi fullscreen reali vanno verificati separatamente sull’hardware destinatario; `--still` ignora gli eventi di input, quindi non usarlo per i test dei tasti.
 
 Build headless Mac dei test CPU: `clang -std=c99 -O2 -ffp-contract=off -Wno-deprecated-declarations -I/opt/homebrew/include -L/opt/homebrew/lib tools/check-packed.c -o /tmp/check-packed -lSDL2 -framework OpenGL -lm -lpthread`.
 
@@ -128,3 +128,17 @@ The compact profiler also runs on main: CPU process time (including workers),
 current RSS, asynchronous GPU time when supported, Radeon global VRAM at 2 Hz
 or an allocation estimate. The RV350 reports GPU timing as unavailable. Graphs
 use triangle strips, preserving the workaround for native-line driver lockups.
+
+`check-quality-cycle.c`: compile like the OpenGL checks, then run from `bin/`:
+
+```sh
+./check-quality-cycle --windowed --frames 210 --preload --ram-preload-mib 0 --no-vsync
+```
+
+Exercises two complete F4 cycles through real SDL key events, with terrain and
+vegetation workers active, in walk and fly. Checks coarse planet coverage,
+render sizes, shader selection, bloom targets, reflection state and shadow sizes.
+Do not pass `--still` (it ignores keys) or a non-default startup preset.
+`check-stream-view.c` also checks distance limits/hysteresis for all three presets
+and both movement modes; `check-flight-rendering.c` checks shadow map resizing
+and the matching receiver texel step.

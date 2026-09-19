@@ -29,6 +29,7 @@
 #define PATCH 24
 #define NV ((PATCH + 1) * (PATCH + 1) + 4 * (PATCH + 1))
 #define RAM_PRELOAD (512u * 1024u * 1024u)
+#include "quality-presets.h"
 typedef struct {
   float x, y, z;
 } V3;
@@ -106,7 +107,7 @@ static int spawnReady;
 static int natureQuality = 1, performanceMode;
 /* Worker priorities are runtime state, separate from serialized nature data. */
 static float natureRequestPriority[65536];
-static GLuint postQualityP, postPerformanceP, landPrograms[2][2];
+static GLuint postQualityP, postPerformanceP, postLowP, landPrograms[2][2];
 static GLint landPageLocations[2][2], landOriginLocations[2][2],
     landEyeLocations[2][2], fogPlaneLocations[2][2];
 static int cpuFogPatches, gpuFogPatches;
@@ -544,7 +545,7 @@ static int wantsSplit(Node *n) {
     static const float floors[6]={8,16,64,256,1024,2048};
     static const float scales[6]={1,1,.85f,.7f,.6f,.12f};
     n->streamBand=streamBand(streamCenter(n),streamRadius(n),n->streamBand);
-    minimum=floors[n->streamBand];density*=scales[n->streamBand];
+    minimum=floors[n->streamBand]*quality()->patchScale;density*=scales[n->streamBand]*quality()->terrainDensity;
   }
   n->split = n->level < MAXLEVEL && n->size > minimum &&
              dist < n->size * (n->split ? 1.65f : 1.50f) * density;
@@ -969,7 +970,7 @@ static void view(int n) {
          dot(surfaceNormal(d), d));
 }
 static void resizeBloom(void) {
-  int size = performanceMode ? 128 : 256;
+  int size = quality()->bloomSize;
   for (int k = 0; k < 2; k++)
     if (glow[k].w != size) {
       glDeleteFramebuffers(1, &glow[k].fbo);
@@ -979,8 +980,8 @@ static void resizeBloom(void) {
 }
 static void resolution(void) {
   SDL_GL_GetDrawableSize(window, &width, &height);
-  rw = width;
-  rh = height;
+  rw = (int)fmaxf(1,floorf(width*quality()->renderScale));
+  rh = (int)fmaxf(1,floorf(height*quality()->renderScale));
   if (scene.tex) {
     int tw = 1, th = 1;
     while (tw < rw)
@@ -1068,7 +1069,7 @@ static void prepareMeshLODs(void) {
   meshTolerance = 1;
   int triangleBudget =
       (int)clampf(160000.0f * terrainDetail * rw * rh / (768.0f * 576.0f),
-                  90000 * terrainDetail, 750000);
+                  90000 * terrainDetail, 750000)*quality()->meshBudget;
   /* Budget the complete selected cover, including the coarse off-cone terrain. */
   for (int attempt = 0; attempt < 16; attempt++) {
     int total = 0;
@@ -1470,7 +1471,7 @@ static void render(void) {
   drawScene();
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
-  if (bloom && !overdrawView) {
+  if (bloom && qualityPreset>0 && !overdrawView) {
     glBindFramebuffer(GL_FRAMEBUFFER, glow[0].fbo);
     glViewport(0, 0, glow[0].w, glow[0].h);
     glUseProgram(brightP);
@@ -1489,13 +1490,13 @@ static void render(void) {
   }
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glViewport(0, 0, width, height);
-  postP = performanceMode ? postPerformanceP : postQualityP;
+  postP = quality()->postMode==2 ? postLowP : quality()->postMode==1 ? postPerformanceP : postQualityP;
   glUseProgram(postP);
   tex(postP, "sceneTex", 0, scene.tex);
   tex(postP, "bloomTex", 1, glow[0].tex);
   u2(postP, "scale", rw / (float)scene.w, rh / (float)scene.h);
   u2(postP, "halfTexel", .5f / scene.w, .5f / scene.h);
-  u1(postP, "bloom", bloom && !overdrawView ? 1 : 0);
+  u1(postP, "bloom", bloom && qualityPreset>0 && !overdrawView ? 1 : 0);
 
   quad();
   perfEnd();
@@ -1543,6 +1544,16 @@ static void openPad(void) {
       }
     }
 }
+static void setQualityPreset(int preset) {
+  if(preset==qualityPreset)return;
+  qualityPreset=preset;performanceMode=preset==0;lodRevision++;
+  /* Async hidden results are invalid after a distance/LOD/resolution change. */
+  occlusionEpoch++;occlusionSignature=0;occlusionStable=0;occlusionCooldown=0;
+  sunReady=reflectionReady=0;reflectionLastFrame=-100;
+  resolution();
+  printf("PRESET name=%s policy=%s terrain_m=%.0f/%.0f nature_m=%.0f\n",
+    quality()->name,quality()->label,quality()->walkDetail,quality()->flyDetail,quality()->natureDistance);
+}
 int main(int argc, char **argv) {
   resourceInit();
   int preloadMode = -1, startMoon = 0, probeBody = 0, moonView=0;
@@ -1580,9 +1591,15 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc)
       worldSeed = (uint32_t)strtoul(argv[++i], NULL, 10);
     else if (!strcmp(argv[i], "--performance")) {
-      performanceMode = 1;
+      qualityPreset = 0;
     } else if (!strcmp(argv[i], "--resolution") && i + 1 < argc) {
       if(sscanf(argv[++i], "%dx%d", &requestedWidth, &requestedHeight)!=2)die("invalid resolution");
+    }
+    else if (!strcmp(argv[i], "--preset") && i+1<argc) {
+      const char *name=argv[++i];int found=-1;
+      for(int p=0;p<3;p++)if(!strcmp(name,qualityPresets[p].name))found=p;
+      if(found<0)die("preset must be low, medium or high");
+      qualityPreset=found;
     }
     else if (!strcmp(argv[i], "--nature-quality") && i + 1 < argc)
       natureQuality = atoi(argv[++i]);
@@ -1633,7 +1650,7 @@ int main(int argc, char **argv) {
       puts("poor-mans-sky [--frames N] [--capture image.ppm] [--view 1|2] [--seed N] "
            "[--moon] [--time 0..1] [--resolution WxH] [--altitude metres-AGL] [--pitch radians] [--still] "
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
-           "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
+           "[--nature-quality 0|1|2] [--performance] [--preset low|medium|high] [--tour] [--no-hud] "
            "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-streaming] [--legacy-terrain] [--preload|--no-preload] "
            "[--terrain-detail 1] [--texture-detail 1]");
       return 0;
@@ -1644,7 +1661,9 @@ int main(int argc, char **argv) {
       natureQuality > 2 || viewNo < 1 ||
       viewNo > 2 || frames < 0 || !isfinite(lunarPhaseOffset) || (capture && !frames))
     die("invalid arguments");
+  performanceMode=qualityPreset==0;
   setvbuf(stdout, NULL, _IOLBF, 0);
+  printf("PRESET name=%s policy=%s\n",quality()->name,quality()->label);
   gameModeLib = dlopen("libgamemode.so.0", RTLD_NOW);
   if (gameModeLib) {
     int (*startGameMode)(void) =
@@ -1747,6 +1766,7 @@ int main(int argc, char **argv) {
 
   postP = postQualityP = program("bake.vert", "post.frag");
   postPerformanceP = program("bake.vert", "post-fast.frag");
+  postLowP = program("bake.vert", "post-low.frag");
   brightP = program("bake.vert", "bright.frag");
   blurP = program("bake.vert", "blur.frag");
   int tw = 1, th = 1;
@@ -1897,8 +1917,7 @@ int main(int argc, char **argv) {
         if (k == SDLK_F2)
           hud = !hud;
         if (k == SDLK_F4) {
-          performanceMode = !performanceMode;
-          resolution();
+          setQualityPreset((qualityPreset+1)%3);
         }
         if (k == SDLK_F3)
           wire = !wire;
@@ -1917,7 +1936,7 @@ int main(int argc, char **argv) {
               "Flight: LB/RB yaw, X brake, Y land. WASD pitch/roll, Q/R yaw.\n"
               "PgUp/PgDn forward/reverse (hold). F6 advance time. Start pause. "
               "1/2 reset.\n"
-              "+/- resolution; F2 HUD; F4 quality/performance; F3 wireframe; "
+              "+/- resolution; F2 HUD; F4 low/medium/high; F3 wireframe; "
               "F12 screenshot; "
               "Esc release/exit.",
               window);
@@ -2169,9 +2188,9 @@ int main(int argc, char **argv) {
          flying ? "FLY" : "WALK");
   printf("REFLECTION ready=%d terrain_patches=%d size=128 interval=%d updates=%d max_gap=%d MORPH "
          "transitions=%d active=%d\n",
-         reflectionReady, reflectionDraws, reflectionInterval, reflectionUpdates,
+         reflectionReady, reflectionDraws, quality()->reflectionEvery?(reflectionInterval?reflectionInterval:quality()->reflectionEvery):0, reflectionUpdates,
          reflectionMaxGap, morphStarted, morphActive);
-  printf("STREAM_PRIORITY directional=%d bubble=%.0f bands=4,16,64 margin_deg=10 retain_deg=16 replacements=%d\n", streamViewReady,streamBubble,priorityReplacements);
+  printf("STREAM_PRIORITY directional=%d bubble=%.0f detail_range=%.0f bands=4,16,64 margin_deg=%.0f retain_deg=%.0f replacements=%d\n", streamViewReady,streamBubble,streamDetailRange,quality()->streamMargin,quality()->streamMargin+6,priorityReplacements);
   printf("GENERATION jobs=%d worker_ms=%.1f\n", generatedJobs, generationMS);
   printf("TEXTURE_TRANSITIONS started=%d extra_vram_kib=256\n",
          textureTransitions);

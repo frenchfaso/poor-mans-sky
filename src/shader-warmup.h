@@ -42,7 +42,7 @@ static void warmShaders(void) {
   if(p==moonP || p==moonAirP)tex(p,"rockTex",0,moonRock);
   if(p==cloudP)tex(p,"cloudTex",0,cloudTex);
   if(p==waterP){tex(p,"detailTex",0,detailMap.tex);tex(p,"reflectionTex",1,white);}
-  if(p==postQualityP || p==postPerformanceP || p==brightP || p==blurP || p==reflectionBlurP){tex(p,"sceneTex",0,scene.tex);tex(p,"bloomTex",1,glow[0].tex);}
+  if(p==postQualityP || p==postPerformanceP || p==postLowP || p==brightP || p==blurP || p==reflectionBlurP){tex(p,"sceneTex",0,scene.tex);tex(p,"bloomTex",1,glow[0].tex);}
   glBegin(GL_TRIANGLES);glColor4f(1,1,1,1);glNormal3f(0,0,1);
   glTexCoord3f(0,0,-1);glVertex3f(-1,-1,-.2f);glTexCoord3f(1,0,-1);glVertex3f(1,-1,-.2f);glTexCoord3f(.5,1,-1);glVertex3f(0,1,-.2f);glEnd();
   gpuCheckpoint("shader-warmup-submit");glFinish();gpuCheckpoint("shader-warmup-finished");checkGL("shader warmup");count++;

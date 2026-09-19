@@ -74,6 +74,13 @@ int main(void) {
   /* A scheduled refresh from a different orbit angle keeps the same footprint. */
   frameNo+=4;sunShadowUpdate();
   assert(sunUpdates==updates+1 && !memcmp(&sunAnchor,&fixedAnchor,sizeof(V3)));
+  for(int p=0;p<3;p++) {
+    setQualityPreset(p);sunShadowUpdate();
+    assert(sunReady && sunMap.w==quality()->shadowSize);
+    sunShadowGround();
+    float texel=0;glGetUniformfv(sunGroundP,uniformLocation(sunGroundP,"shadowTexel"),&texel);
+    assert(fabsf(texel*sunMap.w-1)<1e-6f);
+  }
   assert(glGetError()==GL_NO_ERROR);
   sunShadowClose();SDL_GL_DeleteContext(context);SDL_DestroyWindow(window);SDL_Quit();
   puts("PASS ship/world depth, space clipping, foreground blending, camera lighting, shadow roll/state cache and camera-independent orbit footprint");

@@ -3,7 +3,7 @@
 static Target reflectionMap, reflectionBlur;
 static GLuint reflectionBlurP, reflectionLandP;
 static int reflectionEnabled=1;
-static int reflectionInterval = 1, reflectionUpdates, reflectionMaxGap;
+static int reflectionInterval = 0, reflectionUpdates, reflectionMaxGap;
 static V3 reflectionEye;
 static float reflectionVP[16];
 static int reflectionReady, reflectionLastFrame = -100, reflectionDraws;
@@ -11,7 +11,7 @@ static V3 mirrorDirection(V3 v, V3 normal) {
   return add(v, mul(normal, -2 * dot(v, normal)));
 }
 static void updateReflection(void) {
-  if(!reflectionEnabled){reflectionReady=0;return;}
+  if(!reflectionEnabled || !quality()->reflectionEvery){reflectionReady=0;return;}
   float altitude = sqrtf(dot(cameraEye, cameraEye)) - RADIUS;
   int waterVisible = 0;
   for (int i = 0; i < selectedCount; i++)
@@ -21,7 +21,7 @@ static void updateReflection(void) {
     reflectionReady = 0;
     return;
   }
-  if (reflectionReady && frameNo - reflectionLastFrame < reflectionInterval)
+  if (reflectionReady && frameNo - reflectionLastFrame < (reflectionInterval?reflectionInterval:quality()->reflectionEvery))
     return;
   if (reflectionReady && frameNo - reflectionLastFrame > reflectionMaxGap)
     reflectionMaxGap = frameNo - reflectionLastFrame;

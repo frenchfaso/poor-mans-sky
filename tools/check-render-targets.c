@@ -24,18 +24,19 @@ int main(void) {
     glow[k] = target(256, 256, 0, 0);
   width = 1024;
   height = 768;
-  for (int p = 0; p < 2; p++)
+  for (int p = 0; p < 3; p++)
     for (int i = 0; i < 5; i++) {
-      performanceMode = p;
+      setQualityPreset(p);
       int sizes[5][2]={{640,480},{720,480},{848,480},{800,600},{1024,768}};
       SDL_SetWindowSize(window,sizes[i][0],sizes[i][1]);
       resolution();
       CHECK(scene.w >= rw && scene.h >= rh && scene.w < 2 * rw &&
             scene.h < 2 * rh);
-      CHECK(glow[0].w == (p ? 128 : 256));
+      CHECK(glow[0].w == quality()->bloomSize);
+      CHECK(rw == (int)(width*quality()->renderScale) && rh == (int)(height*quality()->renderScale));
       checkGL("resize");
     }
-  puts("PASS all 10 resolution/preset combinations and complete GPU targets");
+  puts("PASS all 15 resolution/preset combinations and complete GPU targets");
   SDL_GL_DeleteContext(context);
   SDL_DestroyWindow(window);
   SDL_Quit();

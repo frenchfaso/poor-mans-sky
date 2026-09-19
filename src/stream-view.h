@@ -3,25 +3,26 @@
  * Streaming planes are wider than drawing planes and never cull coverage. */
 static int directionalStreaming=1, streamViewReady;
 static V3 streamPriorityEye, streamPlanes[2][4];
-static float streamBubble;
+static float streamBubble,streamDetailRange;
 static void streamViewSetup(void) {
   streamPriorityEye=cameraEye;
-  streamBubble=flying?300:100;
+  streamBubble=flying?quality()->flyBubble:quality()->walkBubble;
+  streamDetailRange=flying?quality()->flyDetail:quality()->walkDetail;
   streamViewReady=directionalStreaming;
   if(!streamViewReady)return;
-  static int planeWidth,planeHeight;
+  static int planeWidth,planeHeight,planePreset=-1;
   static V3 lastForward,lastRight,lastUp;
   static float fx[2],rx[2],fy[2],uy[2];
-  int projectionChanged=planeWidth!=width || planeHeight!=height;
+  int projectionChanged=planeWidth!=width || planeHeight!=height || planePreset!=qualityPreset;
   if(projectionChanged) {
     for(int retained=0;retained<2;retained++) {
-      float margin=(retained?16:10)*PI/180;
+      float margin=(quality()->streamMargin+(retained?6:0))*PI/180;
       float ty=tanf(PI/6+margin);
       float tx=tanf(fminf(1.53f,atanf(tanf(PI/6)*width/height)+margin));
       rx[retained]=1/sqrtf(1+tx*tx);fx[retained]=tx*rx[retained];
       uy[retained]=1/sqrtf(1+ty*ty);fy[retained]=ty*uy[retained];
     }
-    planeWidth=width;planeHeight=height;
+    planeWidth=width;planeHeight=height;planePreset=qualityPreset;
   }
   if(!projectionChanged && !memcmp(&lastForward,&viewForward,sizeof(V3)) &&
      !memcmp(&lastRight,&viewRight,sizeof(V3)) && !memcmp(&lastUp,&viewUp,sizeof(V3)))return;
@@ -40,6 +41,8 @@ static int streamBandDelta(V3 d,float distance2,float radius,int previous) {
   /* sqrt(distance2)-radius <= boundary, expressed without a square root. */
   float limit=streamBubble*(previous==0?1.2f:1)+radius;
   if(distance2<=limit*limit)return 0;
+  limit=streamDetailRange*(previous>=0 && previous<5?1.15f:1)+radius;
+  if(distance2>limit*limit)return 5;
   int retained=previous>=0 && previous<5;
   for(int p=0;p<4;p++)if(dot(d,streamPlanes[retained][p]) < -radius)return 5;
   float boundary=streamBubble*4;

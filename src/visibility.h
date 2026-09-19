@@ -167,7 +167,7 @@ static void occlusionIssue(void) {
   glDisable(GL_CULL_FACE);
   static const unsigned char faces[24] = {0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1,
                                           2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3};
-  for (int i = selectedCount - 1; i >= 0 && occlusionIssued < 24; i--) {
+  for (int i = selectedCount - 1; i >= 0 && occlusionIssued < quality()->queryBudget; i--) {
     Node *n = &nodes[selected[i]];
     if (!n->visible || n->queryPending || n->testedEpoch == occlusionEpoch)
       continue;

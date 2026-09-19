@@ -52,8 +52,39 @@ cd bin
 
 On Linux, default presentation is exclusive fullscreen at 640×480. `+` and `-` cycle the
 available X display modes. Use `--windowed` for a window. F1 lists controls;
-F2 toggles the HUD, F3 wireframe, F4 performance mode, F5 sun shadows,
+F2 toggles the HUD, F3 wireframe, F4 cycles Low → Medium → High → Low, F5 sun shadows,
 F6 advances time, F8 clouds, and F12 captures a screenshot.
+
+### Quality presets
+
+Medium/Balanced is the default. F4 cycles all three presets; the profiler shows
+both the level and its purpose. Start directly with `./run.sh --preset low`
+(or `medium` / `high`); `--performance` is an alias for Low.
+
+| Setting | Low / Performance | Medium / Balanced | High / Quality |
+| --- | --- | --- | --- |
+| Internal resolution at 640×480 | 480×360 | 640×480 | 640×480 |
+| Terrain detail range, walk / fly | 8 / 24 km | 16 / 48 km | 32 / 96 km |
+| Near detail bubble, walk / fly | 80 / 240 m | 100 / 300 m | 140 / 420 m |
+| Vegetation / rocks range | 700 m | 1,400 m | 2,500 m |
+| Grass fade interval | 18–30 m | 25–42 m | 30–50 m |
+| Reflections | off | every 2 frames | every frame |
+| Local shadow map | 256² | 512² | 512² |
+| Post-processing | single texture sample | bloom 128² | bloom 256², vignette, dithering |
+
+Low also uses the simple terrain material and lower mesh, vegetation LOD and
+cloud budgets. Medium and High keep full terrain materials nearby and the
+existing simple shader beyond the microdetail range. Shaders already cheap
+remain shared; quality changes their workload instead of duplicating programs.
+
+All presets preserve the 360° near bubble, expanded camera cone, distance bands,
+conservative occlusion and coarse planet coverage. The terrain range limits
+**refinement**, so the horizon and planet remain visible beyond it, including
+from orbit. F4 reuses procedural caches and streams the newly requested detail.
+Feature toggles and `--no-*` switches still apply; Low disables reflection/bloom
+passes even when their master switches are enabled. `--reflection-interval`
+overrides the cadence in Medium/High. Presets do not change the world's seed or
+asset identities. Settings live in `src/quality-presets.h`.
 
 Walk: WASD and mouse, Space/right mouse for the jetpack, E/F to board/land.
 Xbox flight: left stick pitch/roll, right stick camera orbit (click to reset),

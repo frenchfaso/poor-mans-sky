@@ -578,7 +578,7 @@ static int natureCandidates(V3 d, NatureCandidate *out) {
         V3 q = direction(face, -1 + (x + .5f) / 4096, -1 + (y + .5f) / 4096);
         V3 delta = mul(add(q, mul(d, -1)), RADIUS);
         float distance = sqrtf(dot(delta, delta));
-        if (distance <= NATURE_STREAM_DISTANCE+(streamViewReady?128:0) && count < NATURE_CANDIDATES)
+        if (distance <= quality()->natureDistance+(streamViewReady?128:0) && count < NATURE_CANDIDATES)
           out[count++] = (NatureCandidate){face, x, y, distance, distance, mul(q,RADIUS+elevation(q)), -1};
       }
   }
@@ -630,20 +630,20 @@ static int natureCollectPressure(void) {
 static void natureUpdate(void) {
   natureFrame++;
   V3 d = norm(eye);
-  if (sqrtf(dot(eye, eye)) - RADIUS - elevation(d) > NATURE_VIEW_DISTANCE)
+  if (sqrtf(dot(eye, eye)) - RADIUS - elevation(d) > quality()->natureDistance)
     return;
   static NatureCandidate candidates[NATURE_CANDIDATES];
   static int candidateCount;
   static V3 lastCenter, lastViewEye, lastViewForward, lastViewRight;
   static int lastDirectional=-1, lastPreloading=-1;
   static float lastBubble;
-  static int lastViewWidth, lastViewHeight;
+  static int lastViewWidth, lastViewHeight, lastPreset=-1;
   static NatureCandidate *wanted[NATURE_CANDIDATES];
   static int requestCount;
   V3 moved = mul(add(d, mul(lastCenter, -1)), RADIUS);
   /* The padded spatial list survives small movements; view filtering is
    * independent so turning in place updates the cone without re-enumeration. */
-  int spatialChange=!candidateCount || dot(moved,moved)>(streamViewReady?1024:16) || lastDirectional!=streamViewReady;
+  int spatialChange=!candidateCount || dot(moved,moved)>(streamViewReady?1024:16) || lastDirectional!=streamViewReady || lastPreset!=qualityPreset;
   if (spatialChange) {
     candidateCount = natureCandidates(d, candidates);
     lastCenter = d;
@@ -661,7 +661,7 @@ static void natureUpdate(void) {
         V3 delta=add(c->center,mul(streamPriorityEye,-1));
         float distance2=dot(delta,delta);
         c->band=streamBandDelta(delta,distance2,55,c->band);
-        if(c->band==5 || distance2>(NATURE_STREAM_DISTANCE+55)*(NATURE_STREAM_DISTANCE+55))continue;
+        if(c->band==5 || distance2>(quality()->natureDistance+55)*(quality()->natureDistance+55))continue;
         c->viewDistance=sqrtf(distance2);
       } else {c->band=0;c->viewDistance=c->distance;}
       wanted[requestCount++]=c;
@@ -669,7 +669,7 @@ static void natureUpdate(void) {
     if(streamViewReady)qsort(wanted,requestCount,sizeof(*wanted),natureViewPriority);
     lastViewEye=streamPriorityEye;lastViewForward=viewForward;lastViewRight=viewRight;
     lastPreloading=preloading;lastBubble=streamBubble;lastDirectional=streamViewReady;
-    lastViewWidth=width;lastViewHeight=height;
+    lastViewWidth=width;lastViewHeight=height;lastPreset=qualityPreset;
   }
 
   int requested = 0;
@@ -693,7 +693,7 @@ static void natureUpdate(void) {
   for (int candidate = 0; candidate < requestCount; candidate++) {
     int face = wanted[candidate]->face, x = wanted[candidate]->x,
         y = wanted[candidate]->y;
-    float distance = wanted[candidate]->viewDistance;
+    float distance = wanted[candidate]->viewDistance/quality()->natureLodScale;
     int targetLod = distance < 65 ? 0 : distance < 125 ? 1 : distance < 400 ? 2 : 3;
     int id = natureFind(face, x, y);
     if (id < 0 && requested < 4)
@@ -796,6 +796,7 @@ static void natureDrawPass(int reflected) {
     GLuint p=variant?natureFadeP:natureP;glUseProgram(p);
     u3(p,"sun",sun);u3(p,"fogColor",fogColor);u3(p,"ambientLight",ambientLight);
     u3(p,"sunLight",sunLight);u3(p,"ambientUp",norm(cameraEye));u1(p,"exposure",sceneExposure);
+    glUniform4f(uniformLocation(p,"detailRanges"),quality()->grassNear,quality()->grassFar,quality()->natureDistance*.82f,quality()->natureDistance);
     tex(p,"foliageTex",0,foliageTex);
     if(variant)tex(p,"lodMask",1,natureFadeMask);
   }
@@ -812,7 +813,7 @@ static void natureDrawPass(int reflected) {
   for(int i=0;i<natureUsed;i++) {
     NatureCell *c=&nature[i];if((!c->vbo && !c->oldVbo)||c->wanted<natureFrame-1)continue;
     V3 d=add(c->boundCenter,mul(cameraEye,-1));
-    if(dot(d,d)>(reflected?700.f*700.f:(NATURE_VIEW_DISTANCE+200)*(NATURE_VIEW_DISTANCE+200)))continue;
+    if(dot(d,d)>(reflected?700.f*700.f:(quality()->natureDistance+200)*(quality()->natureDistance+200)))continue;
     natureDrawOrder[drawCandidates++]=(NatureDrawItem){i,dot(d,viewForward)};
   }
   qsort(natureDrawOrder,drawCandidates,sizeof(*natureDrawOrder),natureDrawCompare);
@@ -824,7 +825,7 @@ static void natureDrawPass(int reflected) {
       continue;
     V3 offset = add(c->center, mul(cameraEye, -1));
     float dist = sqrtf(dot(offset, offset));
-    if (dist > (reflected ? 600 : NATURE_VIEW_DISTANCE) ||
+    if (dist > (reflected ? 600 : quality()->natureDistance) ||
         (!c->fading && (cullingMode ? !boxInFrustum(c->boundCenter, c->boundHalf)
                      : dot(offset, cullForward) < dist * .55f - 65)))
       continue;
@@ -854,7 +855,7 @@ static void natureDrawPass(int reflected) {
     V3 delta=add(g->boundCenter,mul(cameraEye,-1));
     float radius=sqrtf(dot(g->boundHalf,g->boundHalf));
     float distance=sqrtf(dot(delta,delta));
-    if(distance-radius>(reflected?600:NATURE_VIEW_DISTANCE) ||
+    if(distance-radius>(reflected?600:quality()->natureDistance) ||
        !boxInFrustum(g->boundCenter,g->boundHalf)) continue;
     V3 offset=add(g->center,mul(cameraEye,-1));
     glPushMatrix();glTranslatef(offset.x,offset.y,offset.z);

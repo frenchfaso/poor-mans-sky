@@ -56,7 +56,7 @@ static void cloudsDraw(void) {
  if(!cloudsEnabled)return;
  cloudPrepareCatalog();
  cloudInit();
- CloudPuff puffs[96]={0};int count=0;
+ CloudPuff puffs[96]={0};int count=0,limit=quality()->cloudLimit;
  const float ty=.5773503f,tx=ty*width/height;
  for(int i=0;i<2304;i++) {
   CloudPuff q=cloudCatalog[i];V3 delta=add(q.p,mul(cameraEye,-1));
@@ -68,14 +68,14 @@ static void cloudsDraw(void) {
   q.dist=distance*distance;
   float fade=clampf((distance/q.size-.12f)/.68f,0,1);q.alpha=fade*fade*(3-2*fade);
   if(q.alpha<.01f)continue;
-  if(count==96 && q.dist>=puffs[95].dist)continue;
-  int slot=count<96?count++:95;
+  if(count==limit && q.dist>=puffs[limit-1].dist)continue;
+  int slot=count<limit?count++:limit-1;
   while(slot>0 && puffs[slot-1].dist>q.dist){puffs[slot]=puffs[slot-1];slot--;}
   puffs[slot]=q;
  }
  /* Budget projected area, not just sprite count. Taper the final puff so
   * approaching a cloud does not cause an abrupt density boundary. */
- float budget=2.5f;
+ float budget=quality()->cloudArea;
  for(int i=0;i<count;i++) {
   V3 delta=add(puffs[i].p,mul(cameraEye,-1));float z=fmaxf(puffs[i].size*.25f,dot(delta,viewForward));
   V3 axes[3];float weights[3];cloudAxes(puffs[i].p,axes);cloudWeights(delta,axes,weights);

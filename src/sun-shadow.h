@@ -28,12 +28,14 @@ static void sunShadowUpdate(void) {
   V3 currentUp=flying?flightUp:bodyUp(shipPos);
   V3 movingShip=add(currentShip,mul(sunLastShip,-1));
   V3 movingSun=add(sun,mul(sunDirection,-1));
-  if(sunReady && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingFocus,movingFocus)<.09f &&
+  if(sunReady && sunMap.w==quality()->shadowSize && frameNo-sunLast<4 && dot(movingSun,movingSun)<4e-7f && dot(movingFocus,movingFocus)<.09f &&
      dot(movingShip,movingShip)<.0625f && dot(currentForward,sunLastForward)>.9999f &&
      dot(currentUp,sunLastUp)>.9999f && flying==sunLastFlying) return;
   Uint64 start=SDL_GetPerformanceCounter();
-  if(!sunMap.tex) {
-    sunMap=target(512,512,1,0);
+  if(sunMap.w!=quality()->shadowSize) {
+    glDeleteTextures(1,&sunMap.tex);glDeleteFramebuffers(1,&sunMap.fbo);
+    glDeleteRenderbuffers(1,&sunMap.depth);
+    sunMap=target(quality()->shadowSize,quality()->shadowSize,1,0);
     glBindTexture(GL_TEXTURE_2D,sunMap.tex);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
@@ -45,14 +47,14 @@ static void sunShadowUpdate(void) {
   sunUp=cross(sun,sunRight);
   V3 d=norm(focus);sunAnchor=mul(d,RADIUS+fmaxf(elevation(d),0));
   /* Snap the orthographic footprint in light space, not to camera orientation. */
-  float texel=32.0f/512;
+  float texel=32.0f/sunMap.w;
   float x=dot(sunAnchor,sunRight),y=dot(sunAnchor,sunUp);
   sunAnchor=add(sunAnchor,add(mul(sunRight,roundf(x/texel)*texel-x),mul(sunUp,roundf(y/texel)*texel-y)));
   V3 delta=add(cameraEye,mul(sunAnchor,-1));
   float m[16]={sunRight.x,sunUp.x,sun.x,0,sunRight.y,sunUp.y,sun.y,0,sunRight.z,sunUp.z,sun.z,0,dot(delta,sunRight),dot(delta,sunUp),dot(delta,sun),1};
   GLfloat clear[4];glGetFloatv(GL_COLOR_CLEAR_VALUE,clear);
   GLboolean dither=glIsEnabled(GL_DITHER);glDisable(GL_DITHER);
-  glBindFramebuffer(GL_FRAMEBUFFER,sunMap.fbo);glViewport(0,0,512,512);
+  glBindFramebuffer(GL_FRAMEBUFFER,sunMap.fbo);glViewport(0,0,sunMap.w,sunMap.h);
   glDepthRange(0,1);glDepthMask(GL_TRUE);glDepthFunc(GL_LESS);
   glClearColor(1,1,1,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
   glClearColor(clear[0],clear[1],clear[2],clear[3]);
@@ -105,6 +107,7 @@ static void sunShadowGround(void) {
   sunReceiverDraws=0;if(!sunReady || wire)return;
   Uint64 start=SDL_GetPerformanceCounter();
   glUseProgram(sunGroundP);tex(sunGroundP,"shadowTex",0,sunMap.tex);
+  u1(sunGroundP,"shadowTexel",1.0f/sunMap.w);
   u3(sunGroundP,"lightRight",sunRight);u3(sunGroundP,"lightUp",sunUp);u3(sunGroundP,"lightDir",sunDirection);
   u1(sunGroundP,"strength",.38f*clampf((dot(norm(cameraEye),sun)-.12f)/.18f,0,1));
   glEnable(GL_BLEND);glBlendFunc(GL_ZERO,GL_SRC_COLOR);glDepthMask(GL_FALSE);glDepthFunc(GL_LEQUAL);

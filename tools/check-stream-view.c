@@ -15,6 +15,7 @@ static int referenceBand(V3 center,float radius,int previous) {
   float distance=fmaxf(0,sqrtf(dot(d,d))-radius);
   if(distance<=streamBubble*(previous==0?1.2f:1))return 0;
   int retained=previous>=0 && previous<5;
+  if(distance>streamDetailRange*(retained?1.15f:1))return 5;
   for(int p=0;p<4;p++)if(dot(d,streamPlanes[retained][p]) < -radius)return 5;
   float boundary=streamBubble*4;
   for(int band=1;band<4;band++,boundary*=4)
@@ -54,7 +55,7 @@ int main(void) {
   ramPush(1);assert(ramHeapCount==0);ramPush(0);assert(ramHeapCount==1);ramHeapCount=0;
   static NatureCandidate candidates[NATURE_CANDIDATES];
   int count=natureCandidates(norm(v3(1,1,1)),candidates);
-  assert(count>40000 && count<NATURE_CANDIDATES && candidates[count-1].distance>2620);
+  assert(count>10000 && count<NATURE_CANDIDATES && candidates[count-1].distance>quality()->natureDistance+120);
   for(int i=0;i<20000;i++) {
     uint32_t h=hash3(i,17,91),j=hash3(i,73,21);
     V3 p=v3((int)(h&65535)-32768,(int)(h>>16)-32768,(int)(j&65535)-32768);
@@ -84,6 +85,19 @@ int main(void) {
   nodes[0]=(Node){0};nodes[0].center=add(eye,v3(0,0,20));nodes[0].size=100;nodes[0].level=0;nodes[0].slot=0;nodes[0].streamBand=-1;
   for(int i=0;i<4;i++) {nodes[0].child[i]=i+1;nodes[i+1]=(Node){0};nodes[i+1].center=nodes[0].center;nodes[i+1].size=50;nodes[i+1].level=1;nodes[i+1].slot=-1;nodes[i+1].streamBand=-1;for(int j=0;j<4;j++)nodes[i+1].child[j]=-1;}
   selectNode(0);assert(selectedCount==1 && selected[0]==0 && pendingCount==4);
+  for(int p=0;p<3;p++)for(int fly=0;fly<2;fly++) {
+    qualityPreset=p;pose(0,fly);
+    assert(streamBand(v3(0,0,-streamBubble*.9f),0,-1)==0);
+    assert(streamBand(v3(0,0,streamDetailRange*.99f),0,-1)<5);
+    assert(streamBand(v3(0,0,streamDetailRange*1.1f),0,-1)==5);
+    assert(streamBand(v3(0,0,streamDetailRange*1.1f),0,4)<5);
+    assert(streamBand(v3(0,0,streamDetailRange*1.2f),0,4)==5);
+    for(int i=0;i<20000;i++) {
+      uint32_t h=hash3(i,17,91),j=hash3(i,73,21);
+      V3 c=v3((int)(h&65535)-32768,(int)(h>>16)-32768,(int)(j&65535)-32768);
+      assert(streamBand(c,(j>>16)*.1f,i%7-1)==referenceBand(c,(j>>16)*.1f,i%7-1));
+    }
+  }
   SDL_DestroyCond(cond);SDL_Quit();
   puts("PASS bubble, distance bands, expanded FOV, bounds, hysteresis, turn/roll, fly range, work/upload ordering and parent fallback");
   return 0;
