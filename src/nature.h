@@ -484,10 +484,9 @@ static int natureWork(void *arg) {
     SDL_LockMutex(natureMutex);
     int id = -1;
     for (int i = 0; i < natureUsed; i++)
-      if (nature[i].state == 1) {
+      if (nature[i].state == 1 &&
+          (id<0 || natureRequestPriority[i]<natureRequestPriority[id]))
         id = i;
-        break;
-      }
     if (natureQuit) {
       SDL_UnlockMutex(natureMutex);
       break;
@@ -548,7 +547,9 @@ static void natureInit(void) {
 
 typedef struct {
   int face, x, y;
-  float distance;
+  float distance, viewDistance;
+  V3 center;
+  int band;
 } NatureCandidate;
 static int natureNear(const void *a, const void *b) {
   const NatureCandidate *x = a, *y = b;
@@ -577,12 +578,17 @@ static int natureCandidates(V3 d, NatureCandidate *out) {
         V3 q = direction(face, -1 + (x + .5f) / 4096, -1 + (y + .5f) / 4096);
         V3 delta = mul(add(q, mul(d, -1)), RADIUS);
         float distance = sqrtf(dot(delta, delta));
-        if (distance <= NATURE_STREAM_DISTANCE && count < NATURE_CANDIDATES)
-          out[count++] = (NatureCandidate){face, x, y, distance};
+        if (distance <= NATURE_STREAM_DISTANCE+(streamViewReady?128:0) && count < NATURE_CANDIDATES)
+          out[count++] = (NatureCandidate){face, x, y, distance, distance, mul(q,RADIUS+elevation(q)), -1};
       }
   }
   qsort(out, count, sizeof(*out), natureNear);
   return count;
+}
+static int natureViewPriority(const void *a,const void *b) {
+  const NatureCandidate *x=*(NatureCandidate*const*)a,*y=*(NatureCandidate*const*)b;
+  if(x->band!=y->band)return x->band<y->band?-1:1;
+  return x->viewDistance<y->viewDistance?-1:x->viewDistance>y->viewDistance;
 }
 #define NATURE_LOOKUP_SIZE (NATURE_CELLS * 4)
 static int natureLookup[NATURE_LOOKUP_SIZE];
@@ -628,18 +634,43 @@ static void natureUpdate(void) {
     return;
   static NatureCandidate candidates[NATURE_CANDIDATES];
   static int candidateCount;
-  static V3 lastCenter;
+  static V3 lastCenter, lastViewEye, lastViewForward, lastViewRight;
+  static int lastDirectional=-1, lastPreloading=-1;
+  static float lastBubble;
+  static int lastViewWidth, lastViewHeight;
+  static NatureCandidate *wanted[NATURE_CANDIDATES];
+  static int requestCount;
   V3 moved = mul(add(d, mul(lastCenter, -1)), RADIUS);
-  if (!candidateCount || dot(moved, moved) > 16) {
+  /* The padded spatial list survives small movements; view filtering is
+   * independent so turning in place updates the cone without re-enumeration. */
+  int spatialChange=!candidateCount || dot(moved,moved)>(streamViewReady?1024:16) || lastDirectional!=streamViewReady;
+  if (spatialChange) {
     candidateCount = natureCandidates(d, candidates);
     lastCenter = d;
   }
-  int requestCount = candidateCount;
-  if (preloading) {
-    requestCount = 0;
-    while (requestCount < candidateCount && candidates[requestCount].distance <= 250)
-      requestCount++;
+  int viewChange=spatialChange || lastPreloading!=preloading || lastBubble!=streamBubble ||
+    lastViewWidth!=width || lastViewHeight!=height ||
+    memcmp(&lastViewEye,&streamPriorityEye,sizeof(V3)) ||
+    memcmp(&lastViewForward,&viewForward,sizeof(V3)) || memcmp(&lastViewRight,&viewRight,sizeof(V3));
+  if(viewChange) {
+    requestCount=0;
+    for(int i=0;i<candidateCount;i++) {
+      NatureCandidate *c=&candidates[i];
+      if(preloading && c->distance>fmaxf(250,streamViewReady?streamBubble:0))continue;
+      if(streamViewReady) {
+        V3 delta=add(c->center,mul(streamPriorityEye,-1));
+        c->viewDistance=sqrtf(dot(delta,delta));
+        c->band=streamBand(c->center,55,c->band);
+        if(c->band==5 || c->viewDistance>NATURE_STREAM_DISTANCE+55)continue;
+      } else {c->band=0;c->viewDistance=c->distance;}
+      wanted[requestCount++]=c;
+    }
+    if(streamViewReady)qsort(wanted,requestCount,sizeof(*wanted),natureViewPriority);
+    lastViewEye=streamPriorityEye;lastViewForward=viewForward;lastViewRight=viewRight;
+    lastPreloading=preloading;lastBubble=streamBubble;lastDirectional=streamViewReady;
+    lastViewWidth=width;lastViewHeight=height;
   }
+
   int requested = 0;
   SDL_LockMutex(natureMutex);
   for(int i=0;i<natureUsed;i++)
@@ -647,11 +678,11 @@ static void natureUpdate(void) {
   memset(natureLookup, 0, sizeof(natureLookup));
   for (int i = 0; i < natureUsed; i++)
     if (nature[i].state) natureIndex(i);
-  /* Mark the entire cover before recycling: distant residents must not be
-   * evicted simply because nearer candidates were visited first. */
+  for(int i=0;i<natureUsed;i++)natureRequestPriority[i]=1e20f;
+  /* Protect wanted cells before replacement; off-cone cells remain cached. */
   for (int k = 0; k < requestCount; k++) {
-    int id = natureFind(candidates[k].face, candidates[k].x, candidates[k].y);
-    if (id >= 0) nature[id].wanted = natureFrame;
+    int id = natureFind(wanted[k]->face, wanted[k]->x, wanted[k]->y);
+    if (id >= 0) {nature[id].wanted = natureFrame;natureRequestPriority[id]=(float)k;}
   }
   if(natureCollectPressure()) {
     memset(natureLookup,0,sizeof(natureLookup));
@@ -659,15 +690,15 @@ static void natureUpdate(void) {
   }
   int freeCursor = 0;
   for (int candidate = 0; candidate < requestCount; candidate++) {
-    int face = candidates[candidate].face, x = candidates[candidate].x,
-        y = candidates[candidate].y;
-    float distance = candidates[candidate].distance;
+    int face = wanted[candidate]->face, x = wanted[candidate]->x,
+        y = wanted[candidate]->y;
+    float distance = wanted[candidate]->viewDistance;
     int targetLod = distance < 65 ? 0 : distance < 125 ? 1 : distance < 400 ? 2 : 3;
     int id = natureFind(face, x, y);
     if (id < 0 && requested < 4)
       for (int i = freeCursor; i <= natureUsed && i < NATURE_CELLS; i++)
         if (!nature[i].state ||
-            (nature[i].state == 4 && !nature[i].fading && nature[i].wanted < natureFrame - 2)) {
+            (nature[i].state == 4 && !nature[i].fading && nature[i].wanted < natureFrame - 90)) {
           id = i;
           freeCursor = i + 1;
           if (i == natureUsed) natureUsed++;
@@ -681,6 +712,7 @@ static void natureUpdate(void) {
           nature[i].y = y;
           nature[i].buildLod = targetLod;
           nature[i].state = 1;
+          natureRequestPriority[i]=(float)candidate;
           requested++;
           SDL_CondSignal(natureCond);
           break;
@@ -688,6 +720,7 @@ static void natureUpdate(void) {
     if (id >= 0) {
       NatureCell *c = &nature[id];
       c->wanted = natureFrame;
+      natureRequestPriority[id]=(float)candidate;
       if (c->state == 4) {
         int lod = c->lod;
         if (lod == 0 && distance > 75)

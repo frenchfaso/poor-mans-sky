@@ -48,7 +48,7 @@ typedef struct {
   GLuint query;
   unsigned queryEpoch, testedEpoch;
   int queryPending, occluded;
-  int split, meshLevel;
+  int split, meshLevel, streamBand;
   unsigned char *pixels;
   Vertex *vertices, *stitched;
   uint32_t edgeKey;
@@ -89,6 +89,8 @@ static V3 fogColor = {.52f, .64f, .73f};
 static uint32_t worldSeed = 20260911;
 static int geological = 1;
 static void cameraBasis(V3 *f, V3 *r, V3 *u);
+static void prepareView(void);
+static float cameraClearance;
 static float jetFuel = 1, roll, lookX, lookY;
 static int sprint, paused;
 static int shaderWarmupEnabled=1,cloudsEnabled=1,overdrawView;
@@ -98,6 +100,8 @@ static GLint pageUniform, originUniform, landEyeUniform, waterEyeUniform,
 static V3 cameraEye, spawnPoint, viewForward, viewRight, viewUp;
 static int spawnReady;
 static int natureQuality = 1, performanceMode;
+/* Worker priorities are runtime state, separate from serialized nature data. */
+static float natureRequestPriority[65536];
 static GLuint postQualityP, postPerformanceP, landPrograms[2][2];
 static GLint landPageLocations[2][2], landOriginLocations[2][2],
     landEyeLocations[2][2], fogPlaneLocations[2][2];
@@ -172,6 +176,7 @@ static int newNode(int face, int level, int x, int y) {
   n->x = x;
   n->y = y;
   n->slot = -1;
+  n->streamBand = -1;
   for (int i = 0; i < 4; i++)
     n->child[i] = -1;
   float s = 2.0f / (1 << level);
@@ -224,10 +229,10 @@ static void generate(const Node *n, unsigned char **pixels, Vertex **vertices) {
   memcpy(p+PAGE_BYTES,&meta,sizeof(meta));
   cacheWrite(1,n->face,n->level,n->x,n->y,p,TERRAIN_BYTES,*vertices,NV*sizeof(Vertex));
 }
-/* Called under the streaming mutex: reprioritize against the current player,
- * not the view direction. Coarse covering pages naturally have near edges. */
+/* Called under the streaming mutex: publish the current camera and reprioritize
+ * coarse coverage before near-to-far detail bands. */
+#include "stream-view.h"
 static int queueBorn[MAXNODE], streamPriorityFrame;
-static V3 streamPriorityEye;
 typedef struct { int id; float priority; } PendingRequest;
 static PendingRequest pendingRequests[2048];
 static int pendingCount, priorityReplacements;
@@ -240,7 +245,10 @@ static float requestPriority(int id, int aging) {
   V3 d = add(streamPriorityEye, mul(n->center, -1));
   float distance = fmaxf(0, sqrtf(dot(d,d)) - n->size*.75f);
   float age = aging && !ramPreloading ? fmaxf(0, streamPriorityFrame-queueBorn[id]) : 0;
-  return streamDistancePriority(distance,n->level,age);
+  if(!streamViewReady)return streamDistancePriority(distance,n->level,age);
+  if(n->level<=2)return -65536+(n->level*8192)+distance*.001f;
+  int band=streamBand(streamCenter(n),streamRadius(n),n->streamBand);
+  return band*8192+fminf(distance/streamBubble*256,4095)+n->level*.01f-fminf(age,120)*8;
 }
 static int popPriorityRequest(void) {
   int best=qhead;
@@ -511,13 +519,19 @@ static float ringScale = 1;
 static int desiredTiles, preloading;
 static float terrainDetail = 1, textureDetail = 1;
 static int wantsSplit(Node *n) {
-  V3 delta = add(eye, mul(n->center, -1));
+  V3 delta = add(streamViewReady?streamPriorityEye:eye, mul(n->center, -1));
   float dist = sqrtf(dot(delta, delta));
-  /* Continuous density preference, fading over 50 metres. A floor prevents
-   * centimetre-sized detail directly under the player. RAM/VRAM pressure can
-   * lower density, but rotating the view never changes this cover. */
+  /* Distance bands cap page refinement; hysteresis protects their boundaries.
+   * Outside the cone a coarse covering mesh always remains available. */
   float density = ringScale * (1 + 1 / (1 + dist / 50));
-  n->split = n->level < MAXLEVEL && n->size > 8 &&
+  float minimum=8;
+  if(streamViewReady) {
+    static const float floors[6]={8,16,64,256,1024,2048};
+    static const float scales[6]={1,1,.85f,.7f,.6f,.12f};
+    n->streamBand=streamBand(streamCenter(n),streamRadius(n),n->streamBand);
+    minimum=floors[n->streamBand];density*=scales[n->streamBand];
+  }
+  n->split = n->level < MAXLEVEL && n->size > minimum &&
              dist < n->size * (n->split ? 1.65f : 1.50f) * density;
   return n->split;
 }
@@ -638,20 +652,24 @@ static void prefetchAhead(void) {
   }
   request(id);
 }
+static int readyPriority(const void *a,const void *b) {
+  float x=requestPriority(*(const int*)a,0),y=requestPriority(*(const int*)b,0);
+  return x<y?-1:x>y;
+}
 static void streamUpdate(void) {
-  V3 right, up;
-  cameraBasis(&cullForward, &right, &up);
+  prepareView();
   SDL_LockMutex(mutex);
+  streamViewSetup();
   recycleNodes();
   selectedCount = requestCount = readyCount = pendingCount = 0;
-  streamPriorityEye = eye;
   streamPriorityFrame = frameNo;
   planCover();
   for (int i = 0; i < 6; i++)
     selectNode(i);
-  if (!preloading)
+  if (!preloading && !streamViewReady)
     prefetchAhead();
   dispatchRequests();
+  qsort(readyIds,readyCount,sizeof(*readyIds),readyPriority);
   SDL_UnlockMutex(mutex);
   Uint64 uploadStart = SDL_GetPerformanceCounter();
   int budget = preloading ? 8 : 4, bytes = 0;
@@ -1007,7 +1025,7 @@ static void camera(void) {
 static float meshTolerance = 1;
 static int chooseMeshLOD(Node *n) {
   int lod = 3;
-  V3 delta = add(eye, mul(n->center, -1));
+  V3 delta = add(streamViewReady?streamPriorityEye:eye, mul(n->center, -1));
   float distance = sqrtf(dot(delta,delta));
   /* Prefer fidelity nearby without forcing triangles onto flat patches. */
   float pixelScale = n->pixelScale * (1 + 1.5f / (1 + distance/50));
@@ -1024,7 +1042,7 @@ static void prepareMeshLODs(void) {
   int choice[1024];
   for (int i = 0; i < selectedCount; i++) {
     Node *n = &nodes[selected[i]];
-    V3 delta = add(eye, mul(n->center, -1));
+    V3 delta = add(streamViewReady?streamPriorityEye:eye, mul(n->center, -1));
     n->sortDistance = dot(delta, delta);
     n->pixelScale =
         rh * .8660254f / fmaxf(1, sqrtf(n->sortDistance) - n->size * .5f);
@@ -1033,7 +1051,7 @@ static void prepareMeshLODs(void) {
   int triangleBudget =
       (int)clampf(160000.0f * terrainDetail * rw * rh / (768.0f * 576.0f),
                   90000 * terrainDetail, 750000);
-  /* Budget the full 360-degree resident cover, independent of camera yaw. */
+  /* Budget the complete selected cover, including the coarse off-cone terrain. */
   for (int attempt = 0; attempt < 16; attempt++) {
     int total = 0;
     for (int i = 0; i < selectedCount; i++) {
@@ -1213,12 +1231,12 @@ static void actorCamera(float near,float far,double lo,double hi) {
   if(flying && near>2) {near=2;far=2000;lo=0;hi=.01;}
   clipNear=near;clipFar=far;glDepthRange(lo,hi);camera();
 }
-static void drawScene(void) {
+static void prepareView(void) {
   V3 f, r, u;
   cameraBasis(&f, &r, &u);
   cameraEye = flying ? add(eye, add(mul(f, -14), mul(u, 4)))
                      : add(eye, mul(bodyUp(eye), -.75f));
-  float cameraClearance=bodyAltitude(cameraEye)-bodyHeight(cameraEye);
+  cameraClearance=bodyAltitude(cameraEye)-bodyHeight(cameraEye);
   if (cameraClearance < .5f) {
     cameraEye = bodyFloor(cameraEye,.5f);
     cameraClearance=.5f;
@@ -1232,6 +1250,8 @@ static void drawScene(void) {
   viewForward = cullForward = f;
   viewRight = r;
   viewUp = u;
+}
+static void drawScene(void) {
   updateSceneLighting();
   /* Disjoint celestial bodies get separate depth ranges and projections.
    * A nearby moon must not steal depth precision from distant planet coasts. */
@@ -1606,6 +1626,8 @@ int main(int argc, char **argv) {
       reflectionEnabled=0;
     else if (!strcmp(argv[i], "--no-sun-shadows"))
       sunShadows = 0;
+    else if (!strcmp(argv[i], "--legacy-streaming"))
+      directionalStreaming=0;
     else if (!strcmp(argv[i], "--profile"))
       profileFrames = 1;
     else if (!strcmp(argv[i], "--terrain-detail") && i + 1 < argc)
@@ -1635,7 +1657,7 @@ int main(int argc, char **argv) {
            "[--moon] [--time 0..1] [--resolution WxH] [--altitude metres-AGL] [--pitch radians] [--still] "
            "[--cache-dir directory] [--no-cache] [--no-vsync] [--windowed] "
            "[--nature-quality 0|1|2] [--performance] [--tour] [--no-hud] "
-           "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-terrain] [--preload|--no-preload] "
+           "[--no-sun-shadows] [--no-clouds] [--no-reflections] [--no-shader-warmup] [--trace-gpu FILE] [--probe-body 1|2] [--moon-view] [--moon-phase 0..1] [--reflection-interval 1|2] [--ram-preload-mib N] [--profile] [--legacy-streaming] [--legacy-terrain] [--preload|--no-preload] "
            "[--terrain-detail 1] [--texture-detail 1]");
       return 0;
     } else
@@ -2074,8 +2096,8 @@ int main(int argc, char **argv) {
           bodyAltitude(eye) - bodyHeight(eye) < 2.6f)
         exitShip();
     }
-    if (!nearMoon(eye)) natureUpdate();
     streamUpdate();
+    if (!nearMoon(eye)) natureUpdate();
     if (profileFrames && frameNo >= 30) {
       glFinish();
       profileStamp = SDL_GetPerformanceCounter();
@@ -2177,7 +2199,7 @@ int main(int argc, char **argv) {
          "transitions=%d active=%d\n",
          reflectionReady, reflectionDraws, reflectionInterval, reflectionUpdates,
          reflectionMaxGap, morphStarted, morphActive);
-  printf("STREAM_PRIORITY rings=10,25,50,100 replacements=%d\n", priorityReplacements);
+  printf("STREAM_PRIORITY directional=%d bubble=%.0f bands=4,16,64 margin_deg=10 retain_deg=16 replacements=%d\n", streamViewReady,streamBubble,priorityReplacements);
   printf("GENERATION jobs=%d worker_ms=%.1f\n", generatedJobs, generationMS);
   printf("TEXTURE_TRANSITIONS started=%d extra_vram_kib=256\n",
          textureTransitions);

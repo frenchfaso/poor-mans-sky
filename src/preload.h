@@ -80,8 +80,10 @@ static int preloadWorld(void) {
   int running = 1, complete = 0, ready = 0, total = 0, plants = 0,
       plantTotal = 0;
   preloading = 1;
+  prepareView();
   /* Materialize the desired tree before reporting its work count. */
   SDL_LockMutex(mutex);
+  streamViewSetup();
   for (int pass = 0; pass < 4; pass++) {
     planCover();
     int ignored = 0;

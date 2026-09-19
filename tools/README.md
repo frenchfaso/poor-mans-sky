@@ -99,3 +99,20 @@ UVs, color and opacity must remain identical, including after compound yaw/pitch
 loops. Also checks the three orthogonal projection weights. Planet-fixed cards
 blend according to the camera position, with no orientation history. One draw
 and one texture sample per fragment; projected overlap retains its area budget.
+
+## View-directed streaming (polygonal engine)
+
+The default policy keeps a 360-degree bubble (walk 100 m, fly 300 m), then uses
+an expanded camera frustum with distance bands at 4×, 16× and 64× that radius.
+The expansion is 10 degrees per side; already wanted detail uses 16 degrees and
+15% distance hysteresis. Off-cone terrain keeps a coarse covering mesh.
+Terrain pages, generation/disk requests, RAM preloading and GPU uploads share
+this policy. Vegetation keeps its species/LOD ranges but filters and prioritizes
+cells against the same view. Cached cells survive turns; existing LOD fades remain.
+
+`--legacy-streaming` selects the previous full-surround policy for comparisons.
+`check-stream-view.c` is a CPU regression (compile like `check-lod-rings.c`):
+bubble, distance/FOV boundaries, conservative bounds, yaw/roll, fly range,
+request/upload ordering and coarse-parent fallback. `check-lod-rings.c` and
+`check-ram-plan.c` also cover the legacy fallback. Camera snapshots are published
+under the terrain mutex; render culling uses its own tighter frustum.

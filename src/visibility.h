@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 /* Bounds contain every submitted terrain/skirt vertex and the displaced sea.
- * Visibility never changes the 360-degree residency or geometry budget. */
+ * Drawing culling is separate from the wider streaming cone and near bubble. */
 static V3 frustumPlanes[6];
 static float frustumOffsets[6];
 static int visibleCount, frustumRejected, horizonRejected;

@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
-/* CPU-only preload: best-first refinement by size/distance, independent of view
- * direction and of the 1024 VRAM slots. The ordinary worker owns generation. */
+/* CPU-only preload: best-first refinement by size/distance, using the streaming view
+ * bands independently of the 1024 VRAM slots. The ordinary worker owns generation. */
 typedef struct { int id; float priority; } RamCandidate;
 static RamCandidate ramHeap[MAXNODE];
 static int ramHeapCount;
 static float ramPriority(const Node *n) {
   V3 d = add(n->center, mul(eye, -1));
-  return n->size / fmaxf(8, sqrtf(dot(d,d)));
+  float priority=n->size / fmaxf(8, sqrtf(dot(d,d)));
+  if(streamViewReady)priority/=1+streamBand(streamCenter(n),streamRadius(n),n->streamBand)*4;
+  return priority;
 }
 static void ramPush(int id) {
   Node *n=&nodes[id];
   if(n->level<0 || n->level>=MAXLEVEL || n->child[0]>=0) return;
+  if(streamViewReady && !wantsSplit(n))return;
   RamCandidate item={id,ramPriority(n)};
   int i=ramHeapCount++;
   while(i && ramHeap[(i-1)/2].priority<item.priority) {
