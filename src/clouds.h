@@ -7,8 +7,34 @@ typedef struct {V3 p;float size,dist,alpha;} CloudPuff;
 static CloudPuff cloudCatalog[2304];
 static uint32_t cloudSeed;static int cloudCatalogReady,cloudDrawCount;
 static float cloudScreenArea;
+static V3 cloudFacing,cloudRight;
+static int cloudBasisReady;
+/* Transport the billboard frame with the viewing direction, never camera
+ * roll. Initial up follows gravity; minimal rotation thereafter also avoids
+ * the singularity of cross(forward, radial) at zenith/nadir. */
+static void cloudBillboardBasis(V3 *right,V3 *up) {
+ V3 f=viewForward,r;
+ if(!cloudBasisReady) {
+  r=cross(f,norm(cameraEye));
+  if(dot(r,r)<1e-6f)r=cross(f,fabsf(f.y)<.9f?v3(0,1,0):v3(1,0,0));
+ } else {
+  float cosine=clampf(dot(cloudFacing,f),-1,1);
+  V3 axis=cross(cloudFacing,f);
+  r=cloudRight;
+  if(cosine>-.9999f) {
+   V3 turn=cross(axis,r);
+   r=add(r,add(turn,mul(cross(axis,turn),1/(1+cosine))));
+  }
+  /* A discontinuous 180-degree view reset has no unique transport axis;
+   * retain the old horizontal axis and reproject it onto the new plane. */
+  r=add(r,mul(f,-dot(r,f)));
+ }
+ *right=cloudRight=norm(r);*up=cross(*right,f);
+ cloudFacing=f;cloudBasisReady=1;
+}
 static void cloudPrepareCatalog(void) {
  if(cloudCatalogReady && cloudSeed==worldSeed)return;
+ cloudBasisReady=0;
  for(int i=0;i<768;i++) {
   uint32_t a=hash3(i,418,worldSeed),b=hash3(i,953,worldSeed);
   float z=(a&65535)/32767.5f-1,t=(b&65535)*2*PI/65536.f;
@@ -41,14 +67,16 @@ static void cloudsDraw(void) {
  if(!cloudsEnabled)return;
  cloudPrepareCatalog();
  cloudInit();
+ V3 billboardRight,billboardUp;cloudBillboardBasis(&billboardRight,&billboardUp);
  CloudPuff puffs[96]={0};int count=0;
  const float ty=.5773503f,tx=ty*width/height;
  for(int i=0;i<2304;i++) {
   CloudPuff q=cloudCatalog[i];V3 delta=add(q.p,mul(cameraEye,-1));
   float z=dot(delta,viewForward),distance=sqrtf(dot(delta,delta));
-  if(dot(norm(q.p),cameraEye)<RADIUS-10000 || z < -q.size ||
-     fabsf(dot(delta,viewRight))>z*tx+q.size*sqrtf(1+tx*tx) ||
-     fabsf(dot(delta,viewUp))>z*ty+q.size*sqrtf(1+ty*ty))continue;
+  float bound=q.size*1.04f; /* Circumscribe the octagon at any screen roll. */
+  if(dot(norm(q.p),cameraEye)<RADIUS-10000 || z < -bound ||
+     fabsf(dot(delta,viewRight))>z*tx+bound*sqrtf(1+tx*tx) ||
+     fabsf(dot(delta,viewUp))>z*ty+bound*sqrtf(1+ty*ty))continue;
   q.dist=distance*distance;
   float fade=clampf((distance/q.size-.12f)/.68f,0,1);q.alpha=fade*fade*(3-2*fade);
   if(q.alpha<.01f)continue;
@@ -79,7 +107,7 @@ static void cloudsDraw(void) {
   int variant=(int)(fabsf(p.p.x*.013f)+fabsf(p.p.z*.007f))%4;
   for(int triangle=1;triangle<7;triangle++)for(int k=0;k<3;k++) {
    int index=k==0?0:k==1?triangle:triangle+1;float x=corners[index][0],y=corners[index][1];
-   V3 v=add(add(p.p,mul(cameraEye,-1)),add(mul(viewRight,x*p.size),mul(viewUp,y*p.size*.52f)));
+   V3 v=add(add(p.p,mul(cameraEye,-1)),add(mul(billboardRight,x*p.size),mul(billboardUp,y*p.size*.52f)));
    vertices[n++]=(CloudVertex){v,((variant%2)*64+.5f+(x*.5f+.5f)*63)/128.f,((variant/2)*64+.5f+(y*.5f+.5f)*63)/128.f,color,p.alpha};
   }
  }

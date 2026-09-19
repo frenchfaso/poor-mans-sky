@@ -92,3 +92,10 @@ blending, lighting based on the final camera, and shadow-cache invalidation for
 roll, boarding state, and a 24-angle orbit with a fixed shadow footprint. The ship shares the nearest body's depth projection
 near the surface; the reserved foreground range is used only in clear space.
 Clouds are composed after opaque actors. No GPU readback is added to the runtime.
+
+
+`check-cloud-roll.c`: OpenGL check (compile as above and run from `bin/`).
+Reads the cloud vertex buffer across 24 roll angles: world-space geometry,
+UVs, color and opacity must remain identical. Also checks continuous billboard
+frames through zenith/nadir and a reversed view. Clouds transport their frame
+with viewing direction independently of camera roll; no extra GPU pass or texture.
