@@ -45,3 +45,10 @@ Caches resolve relative to the launch directory unless `--cache-dir` overrides i
 ## Local Agent Knowledge
 
 When present, start with `wiki/START-HERE.md` for task routing, measured performance, implementation invariants, and self-contained technical recipes. The wiki is local and Git-ignored; verify dated notes against current source and keep new measurements distinct from proposals. Do not force-add wiki files to Git.
+
+## Performance Target
+
+Treat the Acer Pentium M/RV350 as the primary target. Reuse invariant calculations,
+cache with explicit invalidation, and simplify hot-path math when visual results
+remain equivalent. Compare on the Acer when reachable; distinguish Mac correctness
+checks from target performance measurements. Avoid adding GPU synchronization.

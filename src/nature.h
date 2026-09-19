@@ -659,9 +659,10 @@ static void natureUpdate(void) {
       if(preloading && c->distance>fmaxf(250,streamViewReady?streamBubble:0))continue;
       if(streamViewReady) {
         V3 delta=add(c->center,mul(streamPriorityEye,-1));
-        c->viewDistance=sqrtf(dot(delta,delta));
-        c->band=streamBand(c->center,55,c->band);
-        if(c->band==5 || c->viewDistance>NATURE_STREAM_DISTANCE+55)continue;
+        float distance2=dot(delta,delta);
+        c->band=streamBandDelta(delta,distance2,55,c->band);
+        if(c->band==5 || distance2>(NATURE_STREAM_DISTANCE+55)*(NATURE_STREAM_DISTANCE+55))continue;
+        c->viewDistance=sqrtf(distance2);
       } else {c->band=0;c->viewDistance=c->distance;}
       wanted[requestCount++]=c;
     }

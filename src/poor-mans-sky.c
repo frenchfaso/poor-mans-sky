@@ -14,6 +14,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #define PI 3.14159265358979323846f
 #define RADIUS 200000.0f
 #define PAGE 128
@@ -118,7 +122,7 @@ static int profileSamples;
 static float clipNear, clipFar;
 static double worldDepthLo=.01,worldDepthHi=1;
 static V3 eye, sun = {.6f, .5f, .6f}, heading;
-static float pitch = -1.48f, clockTime, fps;
+static float pitch = -1.48f, clockTime;
 static size_t vramEstimate(void);
 static int vramReserve(size_t incoming);
 static int moonWorkPending(void); /* Called with the shared streaming mutex. */
@@ -233,6 +237,7 @@ static void generate(const Node *n, unsigned char **pixels, Vertex **vertices) {
  * coarse coverage before near-to-far detail bands. */
 #include "stream-view.h"
 static int queueBorn[MAXNODE], streamPriorityFrame;
+static float queueScores[512];
 typedef struct { int id; float priority; } PendingRequest;
 static PendingRequest pendingRequests[2048];
 static int pendingCount, priorityReplacements;
@@ -250,15 +255,24 @@ static float requestPriority(int id, int aging) {
   int band=streamBand(streamCenter(n),streamRadius(n),n->streamBand);
   return band*8192+fminf(distance/streamBubble*256,4095)+n->level*.01f-fminf(age,120)*8;
 }
+static void refreshQueuePriorities(void) {
+  if(!streamViewReady || ramPreloading)return;
+  for(int i=0;i<qcount;i++) {
+    int at=(qhead+i)%512;queueScores[at]=requestPriority(queue[at],1);
+  }
+}
+static float queuedPriority(int at) {
+  return streamViewReady && !ramPreloading?queueScores[at]:requestPriority(queue[at],1);
+}
 static int popPriorityRequest(void) {
   int best=qhead;
-  float score=requestPriority(queue[best],1);
+  float score=queuedPriority(best);
   for(int i=1;i<qcount;i++) {
     int at=(qhead+i)%512;
-    float p=requestPriority(queue[at],1);
+    float p=queuedPriority(at);
     if(p<score){score=p;best=at;}
   }
-  int id=queue[best];queue[best]=queue[qhead];
+  int id=queue[best];queue[best]=queue[qhead];queueScores[best]=queueScores[qhead];
   qhead=(qhead+1)%512;qcount--;
   return id;
 }
@@ -268,20 +282,21 @@ static int compareRequests(const void *a,const void *b) {
   return (x->id>y->id)-(x->id<y->id);
 }
 static void dispatchRequests(void) {
+  refreshQueuePriorities();
   qsort(pendingRequests,pendingCount,sizeof(*pendingRequests),compareRequests);
   for(int i=0;i<pendingCount && requestCount<24;i++) {
     int id=pendingRequests[i].id;
     if(nodes[id].state!=0)continue;
     if(qcount==512) {
-      int worst=qhead;float score=requestPriority(queue[worst],1);
+      int worst=qhead;float score=queuedPriority(worst);
       for(int j=1;j<qcount;j++) {
-        int at=(qhead+j)%512;float p=requestPriority(queue[at],1);
+        int at=(qhead+j)%512;float p=queuedPriority(at);
         if(p>score){score=p;worst=at;}
       }
-      if(requestPriority(id,0)>=score)continue;
-      nodes[queue[worst]].state=0;queue[worst]=id;priorityReplacements++;
+      if(pendingRequests[i].priority>=score)continue;
+      nodes[queue[worst]].state=0;queue[worst]=id;queueScores[worst]=pendingRequests[i].priority;priorityReplacements++;
     } else {
-      queue[qtail]=id;qtail=(qtail+1)%512;qcount++;
+      queue[qtail]=id;queueScores[qtail]=pendingRequests[i].priority;qtail=(qtail+1)%512;qcount++;
     }
     nodes[id].state=1;queueBorn[id]=frameNo;requestCount++;
   }
@@ -652,9 +667,12 @@ static void prefetchAhead(void) {
   }
   request(id);
 }
-static int readyPriority(const void *a,const void *b) {
-  float x=requestPriority(*(const int*)a,0),y=requestPriority(*(const int*)b,0);
-  return x<y?-1:x>y;
+static void sortReadyRequests(void) {
+  if(readyCount<2)return;
+  static PendingRequest sorted[2048];
+  for(int i=0;i<readyCount;i++)sorted[i]=(PendingRequest){readyIds[i],requestPriority(readyIds[i],0)};
+  qsort(sorted,readyCount,sizeof(*sorted),compareRequests);
+  for(int i=0;i<readyCount;i++)readyIds[i]=sorted[i].id;
 }
 static void streamUpdate(void) {
   prepareView();
@@ -669,7 +687,7 @@ static void streamUpdate(void) {
   if (!preloading && !streamViewReady)
     prefetchAhead();
   dispatchRequests();
-  qsort(readyIds,readyCount,sizeof(*readyIds),readyPriority);
+  sortReadyRequests();
   SDL_UnlockMutex(mutex);
   Uint64 uploadStart = SDL_GetPerformanceCounter();
   int budget = preloading ? 8 : 4, bytes = 0;
@@ -1443,49 +1461,7 @@ static void drawScene(void) {
   glDepthRange(0, 1);
   profileMark(3);
 }
-static void overlay(void) {
-  glUseProgram(0);
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_CULL_FACE);
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-  glOrtho(0, width, height, 0, -1, 1);
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glColor4f(.015, .025, .04, .8);
-  glBegin(GL_QUADS);
-  glVertex2f(16, 16);
-  glVertex2f(520, 16);
-  glVertex2f(520, 120);
-  glVertex2f(16, 120);
-  glEnd();
-  glColor4f(.86, .94, .97, 1);
-  label(28, 28, "POOR MAN'S SKY", 2);
-  char s[160];
-  snprintf(s, sizeof(s), "%.1F FPS | %d X %d | %s | ALT %.0F M", fps, rw, rh,
-           nearMoon(eye)?(flying?"MOON FLY":"MOON WALK"):(flying ? "FLY" : "WALK"), bodyAltitude(eye));
-  label(28, 54, s, 1.5f);
-  SDL_LockMutex(mutex);
-  snprintf(s, sizeof(s), "PAGES %d/1024 | WORLD RAM %.1F MiB / OS | QUEUE %d",
-           resident, (ramBytes+moonRAMBytes) / 1048576.0f, qcount+moonQueueCount);
-  SDL_UnlockMutex(mutex);
-  label(28, 77, s, 1);
-  snprintf(s, sizeof(s), "%d PATCHES | %.0F M/S | LOD ADAPTIVE | PAD %s", drawn,
-           sqrtf(dot(velocity, velocity)), pad ? "ON" : "OFF");
-  label(28, 95, s, 1);
-  V3 destination=nearMoon(eye)?v3(0,0,0):moonCenter(),to=add(destination,mul(eye,-1));
-  float distance=sqrtf(dot(to,to));
-  snprintf(s,sizeof(s),"%s %.1F KM | %s",nearMoon(eye)?"PLANET":"MOON",(distance-(nearMoon(eye)?RADIUS:MOON_RADIUS))/1000,dot(to,viewForward)>0?"AHEAD":"BEHIND");
-  label(28,125,s,1);
-  snprintf(s,sizeof(s),"MOON LIT %.0F%% | ORBIT 8 GAME DAYS",lunarIlluminatedFraction(eye)*100);label(28,155,s,1);
-  snprintf(s,sizeof(s),"VRAM EST %.1F/56 MIB | RAM/DISK BACKING",vramEstimate()/1048576.0);label(28,140,s,1);
-
-  label(22, height - 24,
-        "RT/LT DRIVE | HOLD A SUPERBOOST | LB/RB YAW | X BRAKE | Y LAND", 1);
-  glDisable(GL_BLEND);
-}
+#include "performance-overlay.h"
 static void render(void) {
   triangles = 0;
   glBindFramebuffer(GL_FRAMEBUFFER, scene.fbo);
@@ -1522,6 +1498,7 @@ static void render(void) {
   u1(postP, "bloom", bloom && !overdrawView ? 1 : 0);
 
   quad();
+  perfEnd();
   if (hud)
     overlay();
   profileMark(4);
@@ -1830,11 +1807,12 @@ int main(int argc, char **argv) {
   checkGL("initialization");
   Uint64 freq = SDL_GetPerformanceFrequency(),
          prev = SDL_GetPerformanceCounter();
-  double elapsed = 0, windowMS = 0, simulationDebt = 0;
+  double elapsed = 0, simulationDebt = 0;
   double frameSamples[4096];
   int frameSampleCount = 0;
-  int samples = 0, windowFrames = 0, running = preloadRunning;
+  int samples = 0, running = preloadRunning;
 
+  perfInit();
   while (running) {
     Uint64 start = SDL_GetPerformanceCounter();
     double realDT = (start - prev) / (double)freq;
@@ -2103,7 +2081,7 @@ int main(int argc, char **argv) {
       profileStamp = SDL_GetPerformanceCounter();
       profileSamples++;
     }
-    gpuCheckpoint("render-begin");render();gpuCheckpoint("render-end");
+    gpuCheckpoint("render-begin");perfBegin();render();gpuCheckpoint("render-end");
     if (frameNo == 0) {
       glFinish();
       checkGL("first frame");
@@ -2134,7 +2112,7 @@ int main(int argc, char **argv) {
              selectedCount, visibleCount, frustumRejected, horizonRejected);
       printf("LOD_BUDGET desired=%d ring_scale=%.3f geometry_tolerance=%.2f "
              "recent_fps=%.2f\n",
-             desiredTiles, ringScale, meshTolerance, fps);
+             desiredTiles, ringScale, meshTolerance, perfFPS);
       int waiting = 0, active = 0;
       for (int k = 0; k < countNode; k++) {
         if (nodes[k].wanted == frameNo) {
@@ -2152,17 +2130,11 @@ int main(int argc, char **argv) {
     }
     gpuCheckpoint("swap-begin");SDL_GL_SwapWindow(window);gpuCheckpoint("swap-end");
     double ms = (SDL_GetPerformanceCounter() - start) * 1000.0 / freq;
+    perfFrame(ms);
     if (frameNo > 10 && !taking) {
       frameSamples[frameSampleCount++ % 4096] = ms;
       elapsed += ms;
       samples++;
-      windowMS += ms;
-      windowFrames++;
-    }
-    if (windowFrames >= 30) {
-      fps = 1000 * windowFrames / windowMS;
-      windowMS = 0;
-      windowFrames = 0;
     }
     SDL_LockMutex(mutex);
     frameNo++;
@@ -2230,6 +2202,7 @@ int main(int argc, char **argv) {
   cacheClose();
   SDL_DestroyCond(cond);
   SDL_DestroyMutex(mutex);
+  perfClose();
   SDL_GL_DeleteContext(context);
   SDL_DestroyWindow(window);
   if (pad)

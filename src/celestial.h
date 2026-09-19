@@ -54,7 +54,7 @@ static void celestialFrameSpawnMoon(V3 observer,V3 forward) {
   lunarOrbitSin=0;
  }
 }
-static float lunarIlluminatedFraction(V3 observer){return clampf(.5f+.5f*dot(norm(add(observer,mul(celestial.center,-1))),celestial.sun),0,1);}
+static inline float lunarIlluminatedFraction(V3 observer){return clampf(.5f+.5f*dot(norm(add(observer,mul(celestial.center,-1))),celestial.sun),0,1);}
 static float lunarPlanetshine(void) {
  float cosine=clampf(dot(norm(celestial.center),celestial.sun),-1,1),a=acosf(cosine);
  float phase=(sinf(a)+(PI-a)*cosine)/PI;

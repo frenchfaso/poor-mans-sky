@@ -116,3 +116,15 @@ bubble, distance/FOV boundaries, conservative bounds, yaw/roll, fly range,
 request/upload ordering and coarse-parent fallback. `check-lod-rings.c` and
 `check-ram-plan.c` also cover the legacy fallback. Camera snapshots are published
 under the terrain mutex; render culling uses its own tighter frustum.
+
+Streaming hot paths compare squared distances, reuse normalized FOV coefficients
+until the viewport changes, and reuse planes until orientation changes. Queue
+scores are refreshed once per dispatch under the mutex; popping jobs only compares
+stored scores. Upload priorities are calculated once per item before sorting.
+The policy regression compares 20,000 cases against the square-root reference
+and checks replacement in a full wrapped queue.
+
+The compact profiler also runs on main: CPU process time (including workers),
+current RSS, asynchronous GPU time when supported, Radeon global VRAM at 2 Hz
+or an allocation estimate. The RV350 reports GPU timing as unavailable. Graphs
+use triangle strips, preserving the workaround for native-line driver lockups.
